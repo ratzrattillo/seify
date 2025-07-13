@@ -91,6 +91,9 @@ impl FromStr for Driver {
         if s == "aaronia_http" || s == "aaronia-http" || s == "aaroniahttp" {
             return Ok(Driver::AaroniaHttp);
         }
+        if s == "bladerf" || s == "bladerf1" || s == "BladeRf" {
+            return Ok(Driver::BladeRf);
+        }
         if s == "rtlsdr" || s == "rtl-sdr" || s == "rtl" {
             return Ok(Driver::RtlSdr);
         }

@@ -13,8 +13,13 @@ struct Args {
     args: String,
 }
 
-pub fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+#[tokio::main]
+pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    //env_logger::init();
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .filter_module("nusb", log::LevelFilter::Info)
+        .init();
     let cli = Args::parse();
 
     let dev = Device::from_args(cli.args)?;
@@ -25,8 +30,13 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     if dev.supports_agc(Rx, 0)? {
         dev.enable_agc(Rx, 0, true)?;
     }
+    println!("enabled agc!");
+    // TODO For bladerf enable expansion board
+
     dev.set_frequency(Rx, 0, 927e6)?;
+    println!("set frequency!");
     dev.set_sample_rate(Rx, 0, 3.2e6)?;
+    println!("set sample rate");
 
     println!("driver:      {:?}", dev.driver());
     println!("id:          {:?}", dev.id()?);
@@ -35,12 +45,21 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("frequency:   {:?}", dev.frequency(Rx, 0)?);
     println!("gain:        {:?}", dev.gain(Rx, 0)?);
 
-    let mut samps = [Complex32::new(0.0, 0.0); 8192];
+    // buffers contains one destination slice for each channel of this stream.
+    let mut rx_channel0_samps = [Complex32::new(0.0, 0.0); 8192];
+    // let mut rx_channel1_samps = [Complex32::new(0.0, 0.0); 8192];
+    // let mut rx_samps = [rx_channel0_samps.as_mut_slice(), rx_channel1_samps.as_mut_slice()];
+    let mut rx_samps = [rx_channel0_samps.as_mut_slice()];
     let mut rx = dev.rx_streamer(&[0])?;
+    println!("obtained rx streamer");
     rx.activate()?;
-    let n = rx.read(&mut [&mut samps], 200000)?;
+    println!("rx activation");
+    // let n = rx.read(&mut [&mut rx_samps], 200000)?;
+    let n = rx.read(&mut rx_samps, 200000)?;
+    println!("rx read");
 
-    plot(&mut samps[..n]);
+    // plot(&mut rx_samps[..n]);
+    plot(&mut rx_samps[0][..n]);
 
     Ok(())
 }

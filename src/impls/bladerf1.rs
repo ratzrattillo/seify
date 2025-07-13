@@ -1,13 +1,15 @@
 use crate::{Args, Direction, Error, Range, RangeItem};
-use bladerf_globals::BladerfGainMode;
+use bladerf_globals::bladerf1::BladerfXb::BladerfXb200;
+use bladerf_globals::bladerf1::{BladerfXb, BLADERF_FREQUENCY_MIN};
+use bladerf_globals::{BladeRfDirection, BladerfFormat, BladerfGainMode, BLADERF_MODULE_RX};
 use futures::executor::block_on;
 use libbladerf_rs::board::bladerf1::BladeRf1;
 use num_complex::Complex32;
 use std::os::fd::{FromRawFd, OwnedFd};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct BladeRf {
-    inner: Arc<BladeRf1>,
+    inner: Arc<Mutex<BladeRf1>>,
 }
 
 impl BladeRf {
@@ -20,7 +22,7 @@ impl BladeRf {
         for dev in dev_infos {
             devs.push(
                 format!(
-                    "driver=hackrfone, bus_number={}, address={}",
+                    "driver=bladerf, bus_number={}, address={}",
                     dev.busnum(),
                     dev.device_address()
                 )
@@ -34,21 +36,35 @@ impl BladeRf {
     pub fn open<A: TryInto<Args>>(args: A) -> Result<Self, Error> {
         let args: Args = args.try_into().or(Err(Error::ValueError))?;
 
+        log::debug!("args: {:?}", args);
         if let Ok(fd) = args.get::<i32>("fd") {
             let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-
+            let mut bladerf =
+                *block_on(BladeRf1::from_fd(fd)).map_err(|e| Error::Misc(e.to_string()))?;
+            let _initialized =
+                block_on(bladerf.initialize()).map_err(|e| Error::Misc(e.to_string()))?;
             return Ok(Self {
-                inner: Arc::new(*block_on(BladeRf1::from_fd(fd)).map_err(|_| Error::ValueError)?),
+                inner: Arc::new(Mutex::new(bladerf)),
             });
         }
 
         let bus_number = args.get("bus_number");
         let address = args.get("address");
         let dev = match (bus_number, address) {
-            (Ok(bus_number), Ok(address)) => block_on(BladeRf1::from_bus_addr(bus_number, address)),
+            (Ok(bus_number), Ok(address)) => {
+                let mut bladerf = block_on(BladeRf1::from_bus_addr(bus_number, address))
+                    .map_err(|e| Error::Misc(e.to_string()))?;
+                let _initialized =
+                    block_on((*bladerf).initialize()).map_err(|e| Error::Misc(e.to_string()))?;
+                bladerf
+            }
             (Err(Error::NotFound), Err(Error::NotFound)) => {
                 log::debug!("Opening first bladerf device");
-                block_on(BladeRf1::from_first())
+                let mut bladerf =
+                    block_on(BladeRf1::from_first()).map_err(|e| Error::Misc(e.to_string()))?;
+                let _initialized =
+                    block_on((*bladerf).initialize()).map_err(|e| Error::Misc(e.to_string()))?;
+                bladerf
             }
             (bus_number, address) => {
                 log::warn!("BladeRf::open received invalid args: bus_number: {bus_number:?}, address: {address:?}");
@@ -57,8 +73,13 @@ impl BladeRf {
         };
 
         Ok(Self {
-            inner: Arc::new(*dev.unwrap()),
+            inner: Arc::new(Mutex::new(*dev)),
         })
+    }
+
+    pub fn enable_expansion_board(&mut self, board_type: BladerfXb) -> Result<(), Error> {
+        block_on(self.inner.lock().unwrap().expansion_attach(board_type))
+            .map_err(|e| Error::Misc(e.to_string()))
     }
 }
 
@@ -66,12 +87,12 @@ impl BladeRf {
 const MTU: usize = 4 * 16384;
 
 pub struct RxStreamer {
-    dev: Arc<BladeRf1>,
+    dev: Arc<Mutex<BladeRf1>>,
 }
 
 pub struct TxStreamer {
     #[allow(dead_code)]
-    dev: Arc<BladeRf1>,
+    dev: Arc<Mutex<BladeRf1>>,
 }
 
 impl crate::RxStreamer for RxStreamer {
@@ -80,7 +101,13 @@ impl crate::RxStreamer for RxStreamer {
     }
 
     fn activate_at(&mut self, _time_ns: Option<i64>) -> Result<(), Error> {
-        Err(Error::NotSupported)
+        let handle = self.dev.lock().unwrap();
+        block_on(handle.perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11))
+            .map_err(|e| Error::Misc(e.to_string()))?;
+        block_on(handle.enable_module(BLADERF_MODULE_RX, true))
+            .map_err(|e| Error::Misc(e.to_string()))?;
+        block_on(handle.experimental_control_urb()).map_err(|e| Error::Misc(e.to_string()))?;
+        Ok(())
     }
 
     fn deactivate_at(&mut self, _time_ns: Option<i64>) -> Result<(), Error> {
@@ -90,8 +117,10 @@ impl crate::RxStreamer for RxStreamer {
     fn read(&mut self, buffers: &mut [&mut [Complex32]], timeout_us: i64) -> Result<usize, Error> {
         Ok(self
             .dev
+            .lock()
+            .unwrap()
             .read_sync(buffers, timeout_us)
-            .map_err(|_| Error::ValueError)?)
+            .map_err(|e| Error::Misc(e.to_string()))?)
     }
 }
 
@@ -147,15 +176,14 @@ impl crate::DeviceTrait for BladeRf {
     }
 
     fn id(&self) -> Result<String, Error> {
-        Ok(block_on(self.inner.serial()).expect("Could not get device id"))
+        block_on(self.inner.lock().unwrap().serial()).map_err(|e| Error::Misc(e.to_string()))
     }
 
     fn info(&self) -> Result<Args, Error> {
         let mut args = Args::default();
-        args.set(
-            "firmware version",
-            block_on(self.inner.fx3_firmware()).unwrap_or("unknown firmware".into()),
-        );
+        let fw_version = block_on(self.inner.lock().unwrap().fx3_firmware())
+            .map_err(|e| Error::Misc(e.to_string()))?;
+        args.set("firmware version", fw_version);
         Ok(args)
     }
 
@@ -169,6 +197,7 @@ impl crate::DeviceTrait for BladeRf {
 
     fn rx_streamer(&self, channels: &[usize], _args: Args) -> Result<Self::RxStreamer, Error> {
         if channels != [0] {
+            log::debug!("BladeRF1 only supports one RX channel!");
             Err(Error::ValueError)
         } else {
             Ok(RxStreamer {
@@ -179,6 +208,7 @@ impl crate::DeviceTrait for BladeRf {
 
     fn tx_streamer(&self, channels: &[usize], _args: Args) -> Result<Self::TxStreamer, Error> {
         if channels != [0] {
+            log::debug!("BladeRF1 only supports one TX channel!");
             Err(Error::ValueError)
         } else {
             Ok(TxStreamer {
@@ -205,7 +235,7 @@ impl crate::DeviceTrait for BladeRf {
     }
 
     fn supports_agc(&self, _direction: Direction, channel: usize) -> Result<bool, Error> {
-        Ok(block_on(self.inner.get_gain_modes(channel as u8)).is_ok())
+        Ok(block_on(self.inner.lock().unwrap().get_gain_modes(channel as u8)).is_ok())
     }
 
     fn enable_agc(&self, _direction: Direction, channel: usize, agc: bool) -> Result<(), Error> {
@@ -214,25 +244,38 @@ impl crate::DeviceTrait for BladeRf {
         } else {
             BladerfGainMode::Mgc
         };
-        Ok(block_on(self.inner.set_gain_mode(channel as u8, gain_mode))
-            .expect("Could not set gain mode"))
+        block_on(
+            self.inner
+                .lock()
+                .unwrap()
+                .set_gain_mode(channel as u8, gain_mode),
+        )
+        .map_err(|e| Error::Misc(e.to_string()))
     }
 
     fn agc(&self, _direction: Direction, _channel: usize) -> Result<bool, Error> {
-        Ok(block_on(self.inner.get_gain_mode()).is_ok())
+        Ok(block_on(self.inner.lock().unwrap().get_gain_mode()).is_ok())
     }
 
     fn gain_elements(&self, _direction: Direction, channel: usize) -> Result<Vec<String>, Error> {
         Ok(BladeRf1::get_gain_stages(channel as u8))
     }
 
-    fn set_gain(&self, direction: Direction, channel: usize, gain: f64) -> Result<(), Error> {
-        self.set_gain_element(direction, channel, "IF", gain)
+    fn set_gain(&self, _direction: Direction, channel: usize, gain: f64) -> Result<(), Error> {
+        Ok(block_on(
+            self.inner
+                .lock()
+                .unwrap()
+                .set_gain(channel as u8, gain as i8),
+        )
+        .map_err(|e| Error::Misc(e.to_string()))?)
     }
 
     fn gain(&self, _direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
-        let gain = block_on(self.inner.get_gain(channel as u8)).expect("Could not retrieve gain");
-        Ok(Some(gain as f64))
+        Ok(Some(
+            block_on(self.inner.lock().unwrap().get_gain(channel as u8))
+                .map_err(|e| Error::Misc(e.to_string()))? as f64,
+        ))
     }
 
     fn gain_range(&self, _direction: Direction, channel: usize) -> Result<Range, Error> {
@@ -248,10 +291,13 @@ impl crate::DeviceTrait for BladeRf {
         name: &str,
         gain: f64,
     ) -> Result<(), Error> {
-        Ok(
-            block_on(self.inner.set_gain_stage(channel as u8, name, gain as i8))
-                .expect("Could not set gain"),
+        block_on(
+            self.inner
+                .lock()
+                .unwrap()
+                .set_gain_stage(channel as u8, name, gain as i8),
         )
+        .map_err(|e| Error::Misc(e.to_string()))
     }
 
     fn gain_element(
@@ -260,11 +306,15 @@ impl crate::DeviceTrait for BladeRf {
         channel: usize,
         name: &str,
     ) -> Result<Option<f64>, Error> {
-        let gain = block_on(self.inner.get_gain_stage(channel as u8, name));
-        match gain {
-            Ok(g) => Ok(Some(g as f64)),
-            Err(_e) => Err(Error::ValueError),
-        }
+        Ok(Some(
+            block_on(
+                self.inner
+                    .lock()
+                    .unwrap()
+                    .get_gain_stage(channel as u8, name),
+            )
+            .map_err(|e| Error::Misc(e.to_string()))? as f64,
+        ))
     }
 
     fn gain_element_range(
@@ -274,8 +324,8 @@ impl crate::DeviceTrait for BladeRf {
         name: &str,
     ) -> Result<Range, Error> {
         // TODO: add support for other gains
-        let range =
-            BladeRf1::get_gain_stage_range(channel as u8, name).expect("Could not get gain");
+        let range = BladeRf1::get_gain_stage_range(channel as u8, name)
+            .map_err(|e| Error::Misc(e.to_string()))?;
         Ok(Range {
             items: vec![RangeItem::Step(
                 range.min as f64,
@@ -286,7 +336,7 @@ impl crate::DeviceTrait for BladeRf {
     }
 
     fn frequency_range(&self, _direction: Direction, _channel: usize) -> Result<Range, Error> {
-        let bladerf1_range = self.inner.get_frequency_range();
+        let bladerf1_range = self.inner.lock().unwrap().get_frequency_range();
         let min_freq = bladerf1_range.min as f64;
         let max_freq = bladerf1_range.max as f64;
         let seify_range = RangeItem::Step(min_freq, max_freq, 1f64);
@@ -294,20 +344,36 @@ impl crate::DeviceTrait for BladeRf {
     }
 
     fn frequency(&self, _direction: Direction, channel: usize) -> Result<f64, Error> {
-        match block_on(self.inner.get_frequency(channel as u8)) {
-            Ok(f) => Ok(f64::from(f)),
-            Err(e) => Err(Error::Misc(e.to_string())),
-        }
+        Ok(
+            block_on(self.inner.lock().unwrap().get_frequency(channel as u8))
+                .map_err(|e| Error::Misc(e.to_string()))? as f64,
+        )
     }
 
     fn set_frequency(
         &self,
-        direction: Direction,
+        _direction: Direction,
         channel: usize,
         frequency: f64,
         _args: Args,
     ) -> Result<(), Error> {
-        self.set_component_frequency(direction, channel, "TUNER", frequency)
+        if frequency < BLADERF_FREQUENCY_MIN as f64 {
+            log::debug!("Frequency {frequency} requires XB200 expansion board");
+            let xb = self.inner.lock().unwrap().expansion_get_attached();
+            if xb != BladerfXb200 {
+                log::debug!("Automatically attaching XB200 expansion board");
+                block_on(self.inner.lock().unwrap().expansion_attach(BladerfXb200))
+                    .map_err(|e| Error::Misc(e.to_string()))?;
+            }
+        }
+        log::debug!("Setting frequency to {}", frequency);
+        block_on(
+            self.inner
+                .lock()
+                .unwrap()
+                .set_frequency(channel as u8, frequency as u64),
+        )
+        .map_err(|e| Error::Misc(e.to_string()))
     }
 
     fn frequency_components(
@@ -347,12 +413,10 @@ impl crate::DeviceTrait for BladeRf {
     }
 
     fn sample_rate(&self, _direction: Direction, channel: usize) -> Result<f64, Error> {
-        let x = block_on(self.inner.get_sample_rate(channel as u8));
-        if x.is_err() {
-            Err(Error::ValueError)
-        } else {
-            Ok(x.unwrap() as f64)
-        }
+        Ok(
+            block_on(self.inner.lock().unwrap().get_sample_rate(channel as u8))
+                .map_err(|e| Error::Misc(e.to_string()))? as f64,
+        )
     }
 
     fn set_sample_rate(
@@ -361,15 +425,14 @@ impl crate::DeviceTrait for BladeRf {
         channel: usize,
         rate: f64,
     ) -> Result<(), Error> {
-        let x = block_on(
+        block_on(
             self.inner
+                .lock()
+                .unwrap()
                 .set_sample_rate(channel.try_into().unwrap(), rate as u32),
-        );
-        if x.is_err() {
-            Err(Error::ValueError)
-        } else {
-            Ok(())
-        }
+        )
+        .map_err(|e| Error::Misc(e.to_string()))?;
+        Ok(())
     }
 
     fn get_sample_rate_range(
@@ -387,14 +450,19 @@ impl crate::DeviceTrait for BladeRf {
 
     fn bandwidth(&self, _direction: Direction, channel: usize) -> Result<f64, Error> {
         Ok(
-            block_on(self.inner.get_bandwidth(channel as u8)).map_err(|_| Error::ValueError)?
-                as f64,
+            block_on(self.inner.lock().unwrap().get_bandwidth(channel as u8))
+                .map_err(|e| Error::Misc(e.to_string()))? as f64,
         )
     }
 
     fn set_bandwidth(&self, _direction: Direction, channel: usize, bw: f64) -> Result<(), Error> {
-        Ok(block_on(self.inner.set_bandwidth(channel as u8, bw as u32))
-            .map_err(|_| Error::ValueError)?)
+        Ok(block_on(
+            self.inner
+                .lock()
+                .unwrap()
+                .set_bandwidth(channel as u8, bw as u32),
+        )
+        .map_err(|e| Error::Misc(e.to_string()))?)
     }
 
     fn get_bandwidth_range(&self, _direction: Direction, _channel: usize) -> Result<Range, Error> {

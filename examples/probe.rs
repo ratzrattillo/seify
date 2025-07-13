@@ -11,7 +11,8 @@ struct Args {
     args: String,
 }
 
-pub fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let cli = Args::parse();
 
