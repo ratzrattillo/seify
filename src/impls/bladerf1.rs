@@ -1,8 +1,8 @@
 use crate::{Args, Direction, Error, Range, RangeItem};
-use bladerf_globals::bladerf1::BladerfXb::BladerfXb200;
-use bladerf_globals::bladerf1::{BladerfXb, BLADERF_FREQUENCY_MIN};
-use bladerf_globals::BladerfGainMode;
+use libbladerf_rs::bladerf1::BladerfXb::BladerfXb200;
+use libbladerf_rs::bladerf1::{BladerfXb, BLADERF_FREQUENCY_MIN};
 use libbladerf_rs::board::bladerf1::BladeRf1;
+use libbladerf_rs::BladerfGainMode;
 use libbladerf_rs::{BladeRf1RxStreamer, BladeRf1TxStreamer};
 use num_complex::Complex32;
 use std::os::fd::{FromRawFd, OwnedFd};
@@ -20,6 +20,7 @@ impl BladeRf {
             .map_err(|_| Error::NotFound)?
             .collect::<Vec<_>>();
 
+        log::trace!("dev_infos: {dev_infos:?}");
         let mut devs = vec![];
         for dev in dev_infos {
             devs.push(
@@ -34,19 +35,19 @@ impl BladeRf {
         Ok(devs)
     }
 
-    /// Create a BladeRf One devices
+    /// Create a BladeRf1 devices
     pub fn open<A: TryInto<Args>>(args: A) -> Result<Self, Error> {
         let args: Args = args.try_into().or(Err(Error::ValueError))?;
 
-        log::debug!("args: {args:?}");
+        log::trace!("args: {args:?}");
         if let Ok(fd) = args.get::<i32>("fd") {
             let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-            let mut bladerf = *BladeRf1::from_fd(fd).map_err(|e| Error::Misc(e.to_string()))?;
+            let mut bladerf = BladeRf1::from_fd(fd).map_err(|e| Error::Misc(e.to_string()))?;
             bladerf
                 .initialize()
                 .map_err(|e| Error::Misc(e.to_string()))?;
             return Ok(Self {
-                inner: Arc::new(Mutex::new(bladerf)),
+                inner: Arc::new(Mutex::new(*bladerf)),
             });
         }
 
@@ -62,7 +63,7 @@ impl BladeRf {
                 bladerf
             }
             (Err(Error::NotFound), Err(Error::NotFound)) => {
-                log::debug!("Opening first bladerf device");
+                log::trace!("Opening first bladerf device");
                 let mut bladerf = BladeRf1::from_first().map_err(|e| Error::Misc(e.to_string()))?;
                 bladerf
                     .initialize()
@@ -70,7 +71,7 @@ impl BladeRf {
                 bladerf
             }
             (bus_number, address) => {
-                log::warn!("BladeRf::open received invalid args: bus_number: {bus_number:?}, address: {address:?}");
+                log::error!("BladeRf::open received invalid args: bus_number: {bus_number:?}, address: {address:?}");
                 return Err(Error::ValueError);
             }
         };
@@ -220,7 +221,7 @@ impl crate::DeviceTrait for BladeRf {
 
     fn rx_streamer(&self, channels: &[usize], _args: Args) -> Result<Self::RxStreamer, Error> {
         if channels != [0] {
-            log::debug!("BladeRF1 only supports one RX channel!");
+            log::error!("BladeRF1 only supports one RX channel!");
             Err(Error::ValueError)
         } else {
             let streamer = BladeRf1RxStreamer::new(self.inner.clone(), 65536, Some(8), None)
@@ -231,7 +232,7 @@ impl crate::DeviceTrait for BladeRf {
 
     fn tx_streamer(&self, channels: &[usize], _args: Args) -> Result<Self::TxStreamer, Error> {
         if channels != [0] {
-            log::debug!("BladeRF1 only supports one TX channel!");
+            log::error!("BladeRF1 only supports one TX channel!");
             Err(Error::ValueError)
         } else {
             let streamer = BladeRf1TxStreamer::new(self.inner.clone(), 65536, Some(8), None)
@@ -384,7 +385,7 @@ impl crate::DeviceTrait for BladeRf {
         _args: Args,
     ) -> Result<(), Error> {
         if frequency < BLADERF_FREQUENCY_MIN as f64 {
-            log::debug!("Frequency {frequency} requires XB200 expansion board");
+            log::trace!("Frequency {frequency} requires XB200 expansion board");
             let xb = self.inner.lock().unwrap().expansion_get_attached();
             if xb != BladerfXb200 {
                 log::debug!("Automatically attaching XB200 expansion board");
@@ -395,7 +396,7 @@ impl crate::DeviceTrait for BladeRf {
                     .map_err(|e| Error::Misc(e.to_string()))?;
             }
         }
-        log::debug!("Setting frequency to {frequency}");
+        log::trace!("Setting frequency to {frequency}");
 
         self.inner
             .lock()
