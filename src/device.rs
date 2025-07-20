@@ -298,6 +298,24 @@ impl Device<GenericDevice> {
                 }
             }
         }
+        #[cfg(all(feature = "bladerf", not(target_arch = "wasm32")))]
+        {
+            if driver.is_none() || matches!(driver, Some(Driver::BladeRf)) {
+                match crate::impls::BladeRf::open(&args) {
+                    Ok(d) => {
+                        return Ok(Device {
+                            dev: Arc::new(DeviceWrapper { dev: d }),
+                        })
+                    }
+                    Err(Error::NotFound) => {
+                        if driver.is_some() {
+                            return Err(Error::NotFound);
+                        }
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
         #[cfg(all(feature = "rtlsdr", not(target_arch = "wasm32")))]
         {
             if driver.is_none() || matches!(driver, Some(Driver::RtlSdr)) {
