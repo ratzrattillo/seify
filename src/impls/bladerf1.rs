@@ -6,12 +6,11 @@ use libbladerf_rs::BladerfGainMode;
 use libbladerf_rs::{BladeRf1RxStreamer, BladeRf1TxStreamer};
 use num_complex::Complex32;
 use std::os::fd::{FromRawFd, OwnedFd};
-use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 
 pub struct BladeRf {
-    inner: Arc<Mutex<BladeRf1>>,
+    inner: BladeRf1,
 }
 
 impl BladeRf {
@@ -42,20 +41,18 @@ impl BladeRf {
         log::trace!("args: {args:?}");
         if let Ok(fd) = args.get::<i32>("fd") {
             let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-            let mut bladerf = BladeRf1::from_fd(fd).map_err(|e| Error::Misc(e.to_string()))?;
+            let bladerf = BladeRf1::from_fd(fd).map_err(|e| Error::Misc(e.to_string()))?;
             bladerf
                 .initialize()
                 .map_err(|e| Error::Misc(e.to_string()))?;
-            return Ok(Self {
-                inner: Arc::new(Mutex::new(*bladerf)),
-            });
+            return Ok(Self { inner: bladerf });
         }
 
         let bus_number = args.get("bus_number");
         let address = args.get("address");
         let dev = match (bus_number, address) {
             (Ok(bus_number), Ok(address)) => {
-                let mut bladerf = BladeRf1::from_bus_addr(bus_number, address)
+                let bladerf = BladeRf1::from_bus_addr(bus_number, address)
                     .map_err(|e| Error::Misc(e.to_string()))?;
                 bladerf
                     .initialize()
@@ -64,7 +61,7 @@ impl BladeRf {
             }
             (Err(Error::NotFound), Err(Error::NotFound)) => {
                 log::trace!("Opening first bladerf device");
-                let mut bladerf = BladeRf1::from_first().map_err(|e| Error::Misc(e.to_string()))?;
+                let bladerf = BladeRf1::from_first().map_err(|e| Error::Misc(e.to_string()))?;
                 bladerf
                     .initialize()
                     .map_err(|e| Error::Misc(e.to_string()))?;
@@ -76,15 +73,11 @@ impl BladeRf {
             }
         };
 
-        Ok(Self {
-            inner: Arc::new(Mutex::new(*dev)),
-        })
+        Ok(Self { inner: dev })
     }
 
     pub fn enable_expansion_board(&mut self, board_type: BladerfXb) -> Result<(), Error> {
         self.inner
-            .lock()
-            .unwrap()
             .expansion_attach(board_type)
             .map_err(|e| Error::Misc(e.to_string()))
     }
@@ -192,19 +185,13 @@ impl crate::DeviceTrait for BladeRf {
     }
 
     fn id(&self) -> Result<String, Error> {
-        self.inner
-            .lock()
-            .unwrap()
-            .serial()
-            .map_err(|e| Error::Misc(e.to_string()))
+        self.inner.serial().map_err(|e| Error::Misc(e.to_string()))
     }
 
     fn info(&self) -> Result<Args, Error> {
         let mut args = Args::default();
         let fw_version = self
             .inner
-            .lock()
-            .unwrap()
             .fx3_firmware()
             .map_err(|e| Error::Misc(e.to_string()))?;
         args.set("firmware version", fw_version);
@@ -224,6 +211,7 @@ impl crate::DeviceTrait for BladeRf {
             log::error!("BladeRF1 only supports one RX channel!");
             Err(Error::ValueError)
         } else {
+            // TODO: Find a way not to have to call clone on self.inner
             let streamer = BladeRf1RxStreamer::new(self.inner.clone(), 65536, Some(8), None)
                 .map_err(|e| Error::Misc(e.to_string()))?;
             Ok(RxStreamer { streamer })
@@ -235,6 +223,7 @@ impl crate::DeviceTrait for BladeRf {
             log::error!("BladeRF1 only supports one TX channel!");
             Err(Error::ValueError)
         } else {
+            // TODO: Find a way not to have to call clone on self.inner
             let streamer = BladeRf1TxStreamer::new(self.inner.clone(), 65536, Some(8), None)
                 .map_err(|e| Error::Misc(e.to_string()))?;
             Ok(TxStreamer { streamer })
@@ -259,12 +248,7 @@ impl crate::DeviceTrait for BladeRf {
     }
 
     fn supports_agc(&self, _direction: Direction, channel: usize) -> Result<bool, Error> {
-        Ok(self
-            .inner
-            .lock()
-            .unwrap()
-            .get_gain_modes(channel as u8)
-            .is_ok())
+        Ok(self.inner.get_gain_modes(channel as u8).is_ok())
     }
 
     fn enable_agc(&self, _direction: Direction, channel: usize, agc: bool) -> Result<(), Error> {
@@ -275,14 +259,12 @@ impl crate::DeviceTrait for BladeRf {
         };
 
         self.inner
-            .lock()
-            .unwrap()
             .set_gain_mode(channel as u8, gain_mode)
             .map_err(|e| Error::Misc(e.to_string()))
     }
 
     fn agc(&self, _direction: Direction, _channel: usize) -> Result<bool, Error> {
-        Ok(self.inner.lock().unwrap().get_gain_mode().is_ok())
+        Ok(self.inner.get_gain_mode().is_ok())
     }
 
     fn gain_elements(&self, _direction: Direction, channel: usize) -> Result<Vec<String>, Error> {
@@ -291,8 +273,6 @@ impl crate::DeviceTrait for BladeRf {
 
     fn set_gain(&self, _direction: Direction, channel: usize, gain: f64) -> Result<(), Error> {
         self.inner
-            .lock()
-            .unwrap()
             .set_gain(channel as u8, gain as i8)
             .map_err(|e| Error::Misc(e.to_string()))
     }
@@ -300,8 +280,6 @@ impl crate::DeviceTrait for BladeRf {
     fn gain(&self, _direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
         Ok(Some(
             self.inner
-                .lock()
-                .unwrap()
                 .get_gain(channel as u8)
                 .map_err(|e| Error::Misc(e.to_string()))? as f64,
         ))
@@ -321,8 +299,6 @@ impl crate::DeviceTrait for BladeRf {
         gain: f64,
     ) -> Result<(), Error> {
         self.inner
-            .lock()
-            .unwrap()
             .set_gain_stage(channel as u8, name, gain as i8)
             .map_err(|e| Error::Misc(e.to_string()))
     }
@@ -335,8 +311,6 @@ impl crate::DeviceTrait for BladeRf {
     ) -> Result<Option<f64>, Error> {
         Ok(Some(
             self.inner
-                .lock()
-                .unwrap()
                 .get_gain_stage(channel as u8, name)
                 .map_err(|e| Error::Misc(e.to_string()))? as f64,
         ))
@@ -361,7 +335,10 @@ impl crate::DeviceTrait for BladeRf {
     }
 
     fn frequency_range(&self, _direction: Direction, _channel: usize) -> Result<Range, Error> {
-        let bladerf1_range = self.inner.lock().unwrap().get_frequency_range();
+        let bladerf1_range = self
+            .inner
+            .get_frequency_range()
+            .map_err(|_| Error::ValueError)?;
         let min_freq = bladerf1_range.min as f64;
         let max_freq = bladerf1_range.max as f64;
         let seify_range = RangeItem::Step(min_freq, max_freq, 1f64);
@@ -371,8 +348,6 @@ impl crate::DeviceTrait for BladeRf {
     fn frequency(&self, _direction: Direction, channel: usize) -> Result<f64, Error> {
         Ok(self
             .inner
-            .lock()
-            .unwrap()
             .get_frequency(channel as u8)
             .map_err(|e| Error::Misc(e.to_string()))? as f64)
     }
@@ -386,12 +361,13 @@ impl crate::DeviceTrait for BladeRf {
     ) -> Result<(), Error> {
         if frequency < BLADERF_FREQUENCY_MIN as f64 {
             log::trace!("Frequency {frequency} requires XB200 expansion board");
-            let xb = self.inner.lock().unwrap().expansion_get_attached();
+            let xb = self
+                .inner
+                .expansion_get_attached()
+                .map_err(|_| Error::ValueError)?;
             if xb != BladerfXb200 {
                 log::debug!("Automatically attaching XB200 expansion board");
                 self.inner
-                    .lock()
-                    .unwrap()
                     .expansion_attach(BladerfXb200)
                     .map_err(|e| Error::Misc(e.to_string()))?;
             }
@@ -399,8 +375,6 @@ impl crate::DeviceTrait for BladeRf {
         log::trace!("Setting frequency to {frequency}");
 
         self.inner
-            .lock()
-            .unwrap()
             .set_frequency(channel as u8, frequency as u64)
             .map_err(|e| Error::Misc(e.to_string()))
     }
@@ -444,8 +418,6 @@ impl crate::DeviceTrait for BladeRf {
     fn sample_rate(&self, _direction: Direction, channel: usize) -> Result<f64, Error> {
         Ok(self
             .inner
-            .lock()
-            .unwrap()
             .get_sample_rate(channel as u8)
             .map_err(|e| Error::Misc(e.to_string()))? as f64)
     }
@@ -457,8 +429,6 @@ impl crate::DeviceTrait for BladeRf {
         rate: f64,
     ) -> Result<(), Error> {
         self.inner
-            .lock()
-            .unwrap()
             .set_sample_rate(channel.try_into().unwrap(), rate as u32)
             .map_err(|e| Error::Misc(e.to_string()))?;
         Ok(())
@@ -480,16 +450,12 @@ impl crate::DeviceTrait for BladeRf {
     fn bandwidth(&self, _direction: Direction, channel: usize) -> Result<f64, Error> {
         Ok(self
             .inner
-            .lock()
-            .unwrap()
             .get_bandwidth(channel as u8)
             .map_err(|e| Error::Misc(e.to_string()))? as f64)
     }
 
     fn set_bandwidth(&self, _direction: Direction, channel: usize, bw: f64) -> Result<(), Error> {
         self.inner
-            .lock()
-            .unwrap()
             .set_bandwidth(channel as u8, bw as u32)
             .map_err(|e| Error::Misc(e.to_string()))
     }
