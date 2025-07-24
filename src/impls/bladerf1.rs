@@ -9,6 +9,25 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::thread::sleep;
 use std::time::Duration;
 
+use libbladerf_rs::range::RangeItem as BladeRfRangeItem;
+impl Into<RangeItem> for BladeRfRangeItem {
+    fn into(self) -> RangeItem {
+        match self {
+            BladeRfRangeItem::Interval(min, max) => RangeItem::Interval(min, max),
+            BladeRfRangeItem::Value(value) => RangeItem::Value(value),
+            BladeRfRangeItem::Step(min, max, step, _scale) => RangeItem::Step(min, max, step),
+        }
+    }
+}
+
+use libbladerf_rs::range::Range as BladeRfRange;
+impl Into<Range> for BladeRfRange {
+    fn into(self) -> Range {
+        Range {
+            items: self.items.into_iter().map(|item| item.into()).collect(),
+        }
+    }
+}
 pub struct BladeRf {
     inner: BladeRf1,
 }
@@ -146,12 +165,14 @@ impl crate::TxStreamer for TxStreamer {
 
     fn write(
         &mut self,
-        _buffers: &[&[Complex32]],
-        _at_ns: Option<i64>,
-        _end_burst: bool,
-        _timeout_us: i64,
+        buffers: &[&[Complex32]],
+        at_ns: Option<i64>,
+        end_burst: bool,
+        timeout_us: i64,
     ) -> Result<usize, Error> {
-        Err(Error::NotSupported)
+        self.streamer
+            .write(buffers, at_ns, end_burst, timeout_us)
+            .map_err(|e| Error::Misc(e.to_string()))
     }
 
     fn write_all(
@@ -286,9 +307,7 @@ impl crate::DeviceTrait for BladeRf {
     }
 
     fn gain_range(&self, _direction: Direction, channel: usize) -> Result<Range, Error> {
-        let range = BladeRf1::get_gain_range(channel as u8);
-        let ri = RangeItem::Step(range.min as f64, range.max as f64, range.step as f64);
-        Ok(Range { items: vec![ri] })
+        Ok(BladeRf1::get_gain_range(channel as u8).into())
     }
 
     fn set_gain_element(
@@ -323,26 +342,17 @@ impl crate::DeviceTrait for BladeRf {
         name: &str,
     ) -> Result<Range, Error> {
         // TODO: add support for other gains
-        let range = BladeRf1::get_gain_stage_range(channel as u8, name)
-            .map_err(|e| Error::Misc(e.to_string()))?;
-        Ok(Range {
-            items: vec![RangeItem::Step(
-                range.min as f64,
-                range.max as f64,
-                range.step as f64,
-            )],
-        })
+        Ok(BladeRf1::get_gain_stage_range(channel as u8, name)
+            .map_err(|e| Error::Misc(e.to_string()))?
+            .into())
     }
 
     fn frequency_range(&self, _direction: Direction, _channel: usize) -> Result<Range, Error> {
-        let bladerf1_range = self
+        Ok(self
             .inner
             .get_frequency_range()
-            .map_err(|_| Error::ValueError)?;
-        let min_freq = bladerf1_range.min as f64;
-        let max_freq = bladerf1_range.max as f64;
-        let seify_range = RangeItem::Step(min_freq, max_freq, 1f64);
-        Ok(Range::new(vec![seify_range]))
+            .map_err(|_| Error::ValueError)?
+            .into())
     }
 
     fn frequency(&self, _direction: Direction, channel: usize) -> Result<f64, Error> {
@@ -439,12 +449,7 @@ impl crate::DeviceTrait for BladeRf {
         _direction: Direction,
         _channel: usize,
     ) -> Result<Range, Error> {
-        let range = BladeRf1::get_sample_rate_range();
-        Ok(Range::new(vec![RangeItem::Step(
-            range.min as f64,
-            range.max as f64,
-            range.step as f64,
-        )]))
+        Ok(BladeRf1::get_sample_rate_range().into())
     }
 
     fn bandwidth(&self, _direction: Direction, channel: usize) -> Result<f64, Error> {
@@ -461,12 +466,7 @@ impl crate::DeviceTrait for BladeRf {
     }
 
     fn get_bandwidth_range(&self, _direction: Direction, _channel: usize) -> Result<Range, Error> {
-        let range = BladeRf1::get_bandwidth_range();
-        Ok(Range::new(vec![RangeItem::Step(
-            range.min as f64,
-            range.max as f64,
-            range.step as f64,
-        )]))
+        Ok(BladeRf1::get_bandwidth_range().into())
     }
 
     fn has_dc_offset_mode(&self, _direction: Direction, _channel: usize) -> Result<bool, Error> {
