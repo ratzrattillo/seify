@@ -66,22 +66,22 @@ impl RtlSdr {
     }
     /// Create an RTL-SDR device
     ///
-    /// At the moment, only an `index` argument is considered, which defines the index of the
-    /// devices in the list returned by the driver.
+    /// At the moment, `index` and `serial` arguments are considered.
+    ///
+    /// `index` has precedence and defines the index in the list returned by the driver. When no
+    /// `index` is provided, `serial` is matched against the enumerated devices.
     pub fn open<A: TryInto<Args>>(args: A) -> Result<Self, Error> {
         let args = args.try_into().or(Err(Error::ValueError))?;
         let rtls = enumerate().or(Err(Error::DeviceError))?;
 
-        let index = match args
-            .get::<usize>("index")
-            .map_err(|_| args.get::<String>("serial"))
-        {
-            Ok(index) => index,
-            Err(Ok(serial)) => rtls
-                .iter()
+        let index = if let Ok(index) = args.get::<usize>("index") {
+            index
+        } else if let Ok(serial) = args.get::<String>("serial") {
+            rtls.iter()
                 .position(|rtl| rtl.serial == serial)
-                .ok_or(Error::NotFound)?,
-            Err(Err(_)) => 0,
+                .ok_or(Error::NotFound)?
+        } else {
+            0
         };
         if index >= rtls.len() {
             return Err(Error::NotFound);
