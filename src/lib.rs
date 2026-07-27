@@ -44,6 +44,9 @@ pub use args::Args;
 
 mod async_compat;
 mod async_device;
+mod async_registry;
+mod backend_macros;
+mod capabilities;
 mod device;
 pub use async_compat::AsyncFutureExt;
 pub use async_compat::BoxedFuture;
@@ -63,7 +66,6 @@ pub use async_device::AsyncFrequency;
 pub use async_device::AsyncFrequencyControl;
 pub use async_device::AsyncGain;
 pub use async_device::AsyncGainControl;
-pub use async_device::AsyncRegistry;
 pub use async_device::AsyncRxChannel;
 pub use async_device::AsyncRxDevice;
 pub use async_device::AsyncSampleRate;
@@ -73,18 +75,19 @@ pub use async_device::AsyncTxDevice;
 pub use async_device::DynAsyncDevice;
 pub use async_device::DynAsyncRxStreamer;
 pub use async_device::DynAsyncTxStreamer;
+pub use async_registry::AsyncRegistry;
+pub use capabilities::ChannelCapabilities;
+pub use capabilities::ChannelControls;
+pub use capabilities::DeviceCapabilities;
 pub use device::Agc;
 pub use device::AgcControl;
 pub use device::Antenna;
 pub use device::AntennaControl;
 pub use device::Bandwidth;
 pub use device::BandwidthControl;
-pub use device::ChannelCapabilities;
-pub use device::ChannelControls;
 pub use device::DcOffset;
 pub use device::DcOffsetControl;
 pub use device::Device;
-pub use device::DeviceCapabilities;
 pub use device::DeviceInfo;
 pub use device::DynDevice;
 pub use device::DynRxStreamer;
@@ -136,8 +139,6 @@ pub mod dev {
     pub use crate::async_compat::with_timeout;
     #[cfg(any(target_arch = "wasm32", feature = "smol", feature = "tokio"))]
     pub use crate::async_compat::TimeoutResult;
-    pub use crate::async_device::AsyncDriverBackend;
-    pub use crate::async_device::AsyncTypedDeviceBackend;
     pub use crate::async_device::DynAsyncAgcControl;
     pub use crate::async_device::DynAsyncAntennaControl;
     pub use crate::async_device::DynAsyncBandwidthControl;
@@ -149,6 +150,8 @@ pub mod dev {
     pub use crate::async_device::DynAsyncRxDevice;
     pub use crate::async_device::DynAsyncSampleRateControl;
     pub use crate::async_device::DynAsyncTxDevice;
+    pub use crate::async_registry::AsyncDriverBackend;
+    pub use crate::async_registry::AsyncTypedDeviceBackend;
     pub use crate::async_streamer::DynAsyncRxStreamerBackend;
     pub use crate::async_streamer::DynAsyncTxStreamerBackend;
     pub use crate::device::DynDeviceBackend;
@@ -158,138 +161,6 @@ pub mod dev {
     pub use crate::impl_dyn_device_backend;
     pub use crate::registry::DriverBackend;
     pub use crate::registry::TypedDeviceBackend;
-}
-
-/// Implement runtime dispatch for a synchronous device backend.
-///
-/// The listed capabilities must be implemented by the backend's concrete type.
-/// Supported capability names are `rx`, `tx`, `antenna`, `agc`, `gain`,
-/// `frequency`, `sample_rate`, `bandwidth`, and `dc_offset`.
-#[macro_export]
-macro_rules! impl_dyn_device_backend {
-    ($device:ty => [$($capability:ident),* $(,)?]) => {
-        impl $crate::dev::DynDeviceBackend for $device {
-            $(
-                $crate::__seify_dyn_device_capability!($capability);
-            )*
-        }
-    };
-}
-
-/// Implement runtime dispatch for an asynchronous device backend.
-///
-/// The listed capabilities must be implemented by the backend's concrete type.
-/// Supported capability names are `rx`, `tx`, `antenna`, `agc`, `gain`,
-/// `frequency`, `sample_rate`, `bandwidth`, and `dc_offset`.
-#[macro_export]
-macro_rules! impl_dyn_async_device_backend {
-    ($device:ty => [$($capability:ident),* $(,)?]) => {
-        impl $crate::dev::DynAsyncDeviceBackend for $device {
-            $(
-                $crate::__seify_dyn_async_device_capability!($capability);
-            )*
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __seify_dyn_device_capability {
-    (rx) => {
-        fn rx_device(&self) -> Option<&dyn $crate::dev::DynRxDevice> {
-            Some(self)
-        }
-    };
-    (tx) => {
-        fn tx_device(&self) -> Option<&dyn $crate::dev::DynTxDevice> {
-            Some(self)
-        }
-    };
-    (antenna) => {
-        fn antenna_control(&self) -> Option<&dyn $crate::AntennaControl> {
-            Some(self)
-        }
-    };
-    (agc) => {
-        fn agc_control(&self) -> Option<&dyn $crate::AgcControl> {
-            Some(self)
-        }
-    };
-    (gain) => {
-        fn gain_control(&self) -> Option<&dyn $crate::GainControl> {
-            Some(self)
-        }
-    };
-    (frequency) => {
-        fn frequency_control(&self) -> Option<&dyn $crate::FrequencyControl> {
-            Some(self)
-        }
-    };
-    (sample_rate) => {
-        fn sample_rate_control(&self) -> Option<&dyn $crate::SampleRateControl> {
-            Some(self)
-        }
-    };
-    (bandwidth) => {
-        fn bandwidth_control(&self) -> Option<&dyn $crate::BandwidthControl> {
-            Some(self)
-        }
-    };
-    (dc_offset) => {
-        fn dc_offset_control(&self) -> Option<&dyn $crate::DcOffsetControl> {
-            Some(self)
-        }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __seify_dyn_async_device_capability {
-    (rx) => {
-        fn async_rx_device(&self) -> Option<&dyn $crate::dev::DynAsyncRxDevice> {
-            Some(self)
-        }
-    };
-    (tx) => {
-        fn async_tx_device(&self) -> Option<&dyn $crate::dev::DynAsyncTxDevice> {
-            Some(self)
-        }
-    };
-    (antenna) => {
-        fn async_antenna_control(&self) -> Option<&dyn $crate::dev::DynAsyncAntennaControl> {
-            Some(self)
-        }
-    };
-    (agc) => {
-        fn async_agc_control(&self) -> Option<&dyn $crate::dev::DynAsyncAgcControl> {
-            Some(self)
-        }
-    };
-    (gain) => {
-        fn async_gain_control(&self) -> Option<&dyn $crate::dev::DynAsyncGainControl> {
-            Some(self)
-        }
-    };
-    (frequency) => {
-        fn async_frequency_control(&self) -> Option<&dyn $crate::dev::DynAsyncFrequencyControl> {
-            Some(self)
-        }
-    };
-    (sample_rate) => {
-        fn async_sample_rate_control(&self) -> Option<&dyn $crate::dev::DynAsyncSampleRateControl> {
-            Some(self)
-        }
-    };
-    (bandwidth) => {
-        fn async_bandwidth_control(&self) -> Option<&dyn $crate::dev::DynAsyncBandwidthControl> {
-            Some(self)
-        }
-    };
-    (dc_offset) => {
-        fn async_dc_offset_control(&self) -> Option<&dyn $crate::dev::DynAsyncDcOffsetControl> {
-            Some(self)
-        }
-    };
 }
 
 use serde::{Deserialize, Serialize};
