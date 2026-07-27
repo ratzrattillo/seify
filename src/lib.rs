@@ -169,14 +169,6 @@ pub mod dev {
 macro_rules! impl_dyn_device_backend {
     ($device:ty => [$($capability:ident),* $(,)?]) => {
         impl $crate::dev::DynDeviceBackend for $device {
-            fn as_any(&self) -> &dyn ::std::any::Any {
-                self
-            }
-
-            fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any {
-                self
-            }
-
             $(
                 $crate::__seify_dyn_device_capability!($capability);
             )*
@@ -193,14 +185,6 @@ macro_rules! impl_dyn_device_backend {
 macro_rules! impl_dyn_async_device_backend {
     ($device:ty => [$($capability:ident),* $(,)?]) => {
         impl $crate::dev::DynAsyncDeviceBackend for $device {
-            fn as_any(&self) -> &dyn ::std::any::Any {
-                self
-            }
-
-            fn as_any_mut(&mut self) -> &mut dyn ::std::any::Any {
-                self
-            }
-
             $(
                 $crate::__seify_dyn_async_device_capability!($capability);
             )*

@@ -905,13 +905,7 @@ where
 /// return `Some(self)` from the accessors below. The `DynAsync*` traits are
 /// blanket adapter traits for runtime dispatch and normally do not need manual
 /// implementations.
-pub trait DynAsyncDeviceBackend: DynAsyncDeviceInfo + MaybeSend + MaybeSync {
-    /// Cast to [`Any`] for downcasting.
-    fn as_any(&self) -> &dyn Any;
-
-    /// Cast to [`Any`] for mutable downcasting.
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-
+pub trait DynAsyncDeviceBackend: DynAsyncDeviceInfo + MaybeSend + MaybeSync + Any {
     /// Return RX streaming capability, if exposed.
     fn async_rx_device(&self) -> Option<&dyn DynAsyncRxDevice> {
         None
@@ -1949,14 +1943,16 @@ impl DynAsyncDevice {
 
     /// Try to downcast to a concrete device implementation.
     pub fn downcast_ref<D: DynAsyncDeviceBackend + 'static>(&self) -> Option<&D> {
-        self.inner.as_any().downcast_ref::<D>()
+        let backend: &dyn DynAsyncDeviceBackend = self.inner.as_ref();
+        let any: &dyn Any = backend;
+        any.downcast_ref::<D>()
     }
 
     /// Try to downcast mutably to a concrete device implementation.
     pub fn downcast_mut<D: DynAsyncDeviceBackend + 'static>(&mut self) -> Option<&mut D> {
-        Shared::get_mut(&mut self.inner)?
-            .as_any_mut()
-            .downcast_mut::<D>()
+        let backend: &mut dyn DynAsyncDeviceBackend = Shared::get_mut(&mut self.inner)?;
+        let any: &mut dyn Any = backend;
+        any.downcast_mut::<D>()
     }
 
     /// SDR driver.

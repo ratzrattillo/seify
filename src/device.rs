@@ -57,13 +57,7 @@ where
 ///
 /// The dynamic backend exposes fundamental device metadata and optional views
 /// into streaming and control capability traits.
-pub trait DynDeviceBackend: DeviceInfo + Send + Sync {
-    /// Cast to [`Any`] for downcasting.
-    fn as_any(&self) -> &dyn Any;
-
-    /// Cast to [`Any`] for mutable downcasting.
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-
+pub trait DynDeviceBackend: DeviceInfo + Send + Sync + Any {
     /// Return RX streaming capability, if the backend exposes it.
     fn rx_device(&self) -> Option<&dyn DynRxDevice> {
         None
@@ -1207,14 +1201,16 @@ impl DynDevice {
 
     /// Try to downcast to a concrete device implementation.
     pub fn downcast_ref<D: DynDeviceBackend + 'static>(&self) -> Option<&D> {
-        self.inner.as_any().downcast_ref::<D>()
+        let backend: &dyn DynDeviceBackend = self.inner.as_ref();
+        let any: &dyn Any = backend;
+        any.downcast_ref::<D>()
     }
 
     /// Try to downcast mutably to a concrete device implementation.
     pub fn downcast_mut<D: DynDeviceBackend + 'static>(&mut self) -> Option<&mut D> {
-        Arc::get_mut(&mut self.inner)?
-            .as_any_mut()
-            .downcast_mut::<D>()
+        let backend: &mut dyn DynDeviceBackend = Arc::get_mut(&mut self.inner)?;
+        let any: &mut dyn Any = backend;
+        any.downcast_mut::<D>()
     }
 
     /// SDR [driver](Driver).
