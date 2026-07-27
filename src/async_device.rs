@@ -1617,10 +1617,18 @@ where
 
 impl<T> AsyncDevice<T>
 where
-    T: AsyncDynDeviceBackend + 'static,
+    T: AsyncDynDeviceBackend + Clone + 'static,
 {
+    /// Clone this typed device into a runtime-dispatched asynchronous device.
+    ///
+    /// Backend clones must refer to the same opened logical device and share
+    /// configuration state.
+    pub fn to_dyn(&self) -> AsyncDynDevice {
+        AsyncDynDevice::from_impl(self.dev.clone())
+    }
+
     /// Convert this typed device into a runtime-dispatched asynchronous device.
-    pub fn erase(self) -> AsyncDynDevice {
+    pub fn into_dyn(self) -> AsyncDynDevice {
         AsyncDynDevice::from_impl(self.dev)
     }
 }
@@ -1661,7 +1669,7 @@ impl AsyncDynDevice {
     }
 
     /// Create a runtime-dispatched asynchronous device from an implementation.
-    pub fn from_impl<T: AsyncDynDeviceBackend + 'static>(dev: T) -> Self {
+    pub fn from_impl<T: AsyncDynDeviceBackend + Clone + 'static>(dev: T) -> Self {
         Self {
             inner: Shared::new(dev),
         }
@@ -2384,8 +2392,9 @@ pub trait AsyncDriverBackend: MaybeSend + MaybeSync {
 ///
 /// Implementations may use `async fn` for `async_probe` and `async_open`; the
 /// explicit trait return type enforces Seify's target-dependent `MaybeSend`
-/// future bound.
-pub trait AsyncTypedDeviceBackend: AsyncDynDeviceBackend + Sized + 'static {
+/// future bound. Cloning an opened backend must create another handle to the
+/// same logical device and shared configuration state.
+pub trait AsyncTypedDeviceBackend: AsyncDynDeviceBackend + Clone + Sized + 'static {
     /// Driver implemented by this backend.
     fn driver() -> Driver;
     /// Probe devices matching `args`.
@@ -2569,6 +2578,7 @@ mod wasm_non_send_compile_check {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    #[derive(Clone)]
     struct LocalOnly {
         reads: Rc<RefCell<usize>>,
     }
@@ -2820,12 +2830,33 @@ mod tests {
     }
 
     #[test]
-    fn async_typed_dummy_erases_and_reports_capabilities() {
+    fn async_typed_dummy_converts_and_reports_capabilities() {
         block_on(async {
             let dev = AsyncDevice::<crate::impls::Dummy>::from_args("driver=dummy")
                 .await
                 .unwrap();
-            let dev = dev.erase();
+            let dyn_dev = dev.to_dyn();
+
+            dev.rx(0)
+                .await
+                .unwrap()
+                .frequency()
+                .set(100.0e6)
+                .await
+                .unwrap();
+            assert_eq!(
+                dyn_dev
+                    .rx(0)
+                    .await
+                    .unwrap()
+                    .frequency()
+                    .value()
+                    .await
+                    .unwrap(),
+                100.0e6
+            );
+
+            let dev = dev.into_dyn();
 
             assert_eq!(dev.driver(), Driver::Dummy);
             assert!(dev.downcast_ref::<crate::impls::Dummy>().is_some());

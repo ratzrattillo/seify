@@ -155,8 +155,8 @@ pub mod dev {
     pub use crate::async_streamer::ErasedAsyncRxStreamer;
     pub use crate::async_streamer::ErasedAsyncTxStreamer;
     pub use crate::device::DynDeviceBackend;
-    pub use crate::device::ErasedRxDevice;
-    pub use crate::device::ErasedTxDevice;
+    pub use crate::device::DynRxDevice;
+    pub use crate::device::DynTxDevice;
     pub use crate::registry::DriverBackend;
     pub use crate::registry::TypedDeviceBackend;
 }

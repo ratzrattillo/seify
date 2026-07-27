@@ -126,11 +126,11 @@ impl DynDeviceBackend for Soapy {
         Some(self)
     }
 
-    fn rx_device(&self) -> Option<&dyn crate::dev::ErasedRxDevice> {
+    fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
 
-    fn tx_device(&self) -> Option<&dyn crate::dev::ErasedTxDevice> {
+    fn tx_device(&self) -> Option<&dyn crate::dev::DynTxDevice> {
         Some(self)
     }
 

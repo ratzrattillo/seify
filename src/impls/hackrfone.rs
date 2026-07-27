@@ -10,6 +10,7 @@ use crate::{
 };
 
 /// HackRF One device backend.
+#[derive(Clone)]
 pub struct HackRfOne {
     inner: Arc<HackRfInner>,
 }
@@ -467,7 +468,7 @@ impl DynDeviceBackend for HackRfOne {
         Some(self)
     }
 
-    fn rx_device(&self) -> Option<&dyn crate::dev::ErasedRxDevice> {
+    fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
 

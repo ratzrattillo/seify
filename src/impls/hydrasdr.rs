@@ -1174,7 +1174,7 @@ impl DynDeviceBackend for HydraSdr {
         Some(self)
     }
 
-    fn rx_device(&self) -> Option<&dyn crate::dev::ErasedRxDevice> {
+    fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
 

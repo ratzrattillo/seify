@@ -22,12 +22,12 @@ pub type DynRxStreamer = Box<dyn RxStreamer>;
 pub type DynTxStreamer = Box<dyn TxStreamer>;
 
 /// Object-safe RX streaming capability for runtime-dispatched devices.
-pub trait ErasedRxDevice: Send + Sync {
+pub trait DynRxDevice: Send + Sync {
     /// Create a type-erased RX streamer.
     fn rx_streamer(&self, channels: &[usize], args: Args) -> Result<DynRxStreamer, Error>;
 }
 
-impl<T> ErasedRxDevice for T
+impl<T> DynRxDevice for T
 where
     T: RxDevice,
     T::RxStreamer: 'static,
@@ -38,12 +38,12 @@ where
 }
 
 /// Object-safe TX streaming capability for runtime-dispatched devices.
-pub trait ErasedTxDevice: Send + Sync {
+pub trait DynTxDevice: Send + Sync {
     /// Create a type-erased TX streamer.
     fn tx_streamer(&self, channels: &[usize], args: Args) -> Result<DynTxStreamer, Error>;
 }
 
-impl<T> ErasedTxDevice for T
+impl<T> DynTxDevice for T
 where
     T: TxDevice,
     T::TxStreamer: 'static,
@@ -55,7 +55,7 @@ where
 
 /// Runtime-dispatched device backend.
 ///
-/// The erased backend only exposes device metadata and optional views into
+/// The dynamic backend only exposes device metadata and optional views into
 /// capability traits. Individual controls live on the smaller capability traits
 /// instead of one mandatory universal device interface.
 pub trait DynDeviceBackend: DeviceInfo + Send + Sync {
@@ -70,12 +70,12 @@ pub trait DynDeviceBackend: DeviceInfo + Send + Sync {
     }
 
     /// Return RX streaming capability, if the backend exposes it.
-    fn rx_device(&self) -> Option<&dyn ErasedRxDevice> {
+    fn rx_device(&self) -> Option<&dyn DynRxDevice> {
         None
     }
 
     /// Return TX streaming capability, if the backend exposes it.
-    fn tx_device(&self) -> Option<&dyn ErasedTxDevice> {
+    fn tx_device(&self) -> Option<&dyn DynTxDevice> {
         None
     }
 
@@ -921,10 +921,18 @@ where
 
 impl<T> Device<T>
 where
-    T: DynDeviceBackend + 'static,
+    T: DynDeviceBackend + Clone + 'static,
 {
+    /// Clone this typed device into a runtime-dispatched device.
+    ///
+    /// Backend clones must refer to the same opened logical device and share
+    /// configuration state.
+    pub fn to_dyn(&self) -> DynDevice {
+        DynDevice::from_impl(self.dev.clone())
+    }
+
     /// Convert this typed device into a runtime-dispatched device.
-    pub fn erase(self) -> DynDevice {
+    pub fn into_dyn(self) -> DynDevice {
         DynDevice::from_impl(self.dev)
     }
 }
@@ -977,13 +985,13 @@ impl DynDevice {
     }
 
     /// Create a runtime-dispatched device from a concrete implementation.
-    pub fn from_impl<T: DynDeviceBackend + 'static>(dev: T) -> Self {
+    pub fn from_impl<T: DynDeviceBackend + Clone + 'static>(dev: T) -> Self {
         Self {
             inner: Arc::new(dev),
         }
     }
 
-    /// Borrow the erased backend.
+    /// Borrow the dynamic backend.
     pub fn as_backend(&self) -> &dyn DynDeviceBackend {
         self.inner.as_ref()
     }
@@ -1603,6 +1611,7 @@ impl_channel_controls!(TxChannel, Direction::Tx);
 mod tests {
     use super::*;
 
+    #[derive(Clone)]
     struct RxOnly;
 
     struct DcToggle(std::sync::Mutex<bool>);
@@ -1636,7 +1645,7 @@ mod tests {
             Some(self)
         }
 
-        fn rx_device(&self) -> Option<&dyn ErasedRxDevice> {
+        fn rx_device(&self) -> Option<&dyn DynRxDevice> {
             Some(self)
         }
     }
@@ -1762,10 +1771,15 @@ mod tests {
     }
 
     #[test]
-    fn typed_device_erases_to_dyn_device_and_downcasts() {
+    fn typed_device_converts_to_dyn_device_and_downcasts() {
         let dummy = crate::impls::Dummy::open(Args::new()).unwrap();
         let dev = Device::from_impl(dummy);
-        let mut dev = dev.erase();
+        let dyn_dev = dev.to_dyn();
+
+        dev.rx(0).unwrap().frequency().set(100.0e6).unwrap();
+        assert_eq!(dyn_dev.rx(0).unwrap().frequency().value().unwrap(), 100.0e6);
+
+        let mut dev = dev.into_dyn();
 
         assert_eq!(dev.driver(), Driver::Dummy);
         assert!(dev.downcast_ref::<crate::impls::Dummy>().is_some());
