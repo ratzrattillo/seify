@@ -64,11 +64,6 @@ pub trait DynDeviceBackend: DeviceInfo + Send + Sync {
     /// Cast to [`Any`] for mutable downcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
 
-    /// Return a structured snapshot of the device's runtime capabilities.
-    fn capabilities(&self) -> Result<DeviceCapabilities, Error> {
-        DeviceCapabilities::from_dyn(self)
-    }
-
     /// Return RX streaming capability, if the backend exposes it.
     fn rx_device(&self) -> Option<&dyn DynRxDevice> {
         None
@@ -927,7 +922,7 @@ where
 {
     /// Structured runtime capabilities for the device.
     pub fn capabilities(&self) -> Result<DeviceCapabilities, Error> {
-        self.dev.capabilities()
+        DeviceCapabilities::from_dyn(&self.dev)
     }
 }
 
@@ -1249,7 +1244,7 @@ impl DynDevice {
 
     /// Structured runtime capabilities for the device.
     pub fn capabilities(&self) -> Result<DeviceCapabilities, Error> {
-        self.inner.capabilities()
+        DeviceCapabilities::from_dyn(self.inner.as_ref())
     }
 
     /// RX channel handle.

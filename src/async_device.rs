@@ -912,11 +912,6 @@ pub trait DynAsyncDeviceBackend: DynAsyncDeviceInfo + MaybeSend + MaybeSync {
     /// Cast to [`Any`] for mutable downcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
 
-    /// Return a structured snapshot of the device's runtime capabilities.
-    fn async_capabilities(&self) -> BoxedFuture<'_, Result<DeviceCapabilities, Error>> {
-        async { async_device_capabilities(self).await }.boxed_async()
-    }
-
     /// Return RX streaming capability, if exposed.
     fn async_rx_device(&self) -> Option<&dyn DynAsyncRxDevice> {
         None
@@ -1584,7 +1579,7 @@ where
     pub fn capabilities(
         &self,
     ) -> impl Future<Output = Result<DeviceCapabilities, Error>> + MaybeSend + '_ {
-        self.dev.async_capabilities()
+        async_device_capabilities(&self.dev)
     }
 }
 
@@ -1996,7 +1991,7 @@ impl DynAsyncDevice {
     pub fn capabilities(
         &self,
     ) -> impl Future<Output = Result<DeviceCapabilities, Error>> + MaybeSend + '_ {
-        self.inner.async_capabilities()
+        async_device_capabilities(self.inner.as_ref())
     }
 
     /// RX channel handle.
