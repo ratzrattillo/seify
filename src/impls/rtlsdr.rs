@@ -484,6 +484,7 @@ impl DeviceInfo for RtlSdr {
 crate::impl_dyn_device_backend!(
     RtlSdr => [rx, antenna, agc, gain, frequency, sample_rate, bandwidth]
 );
+crate::registry::impl_typed_device_backend!(RtlSdr, Driver::RtlSdr);
 
 impl RxDevice for RtlSdr {
     type RxStreamer = RxStreamer;

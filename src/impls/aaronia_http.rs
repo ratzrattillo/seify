@@ -691,6 +691,7 @@ impl DeviceInfo for AaroniaHttp {
 crate::impl_dyn_device_backend!(
     AaroniaHttp => [rx, tx, antenna, agc, gain, frequency, sample_rate, bandwidth]
 );
+crate::registry::impl_typed_device_backend!(AaroniaHttp, crate::Driver::AaroniaHttp);
 
 impl RxDevice for AaroniaHttp {
     type RxStreamer = RxStreamer;

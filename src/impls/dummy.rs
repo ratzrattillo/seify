@@ -131,6 +131,7 @@ impl AsyncDeviceInfo for Dummy {
 crate::impl_dyn_device_backend!(
     Dummy => [rx, tx, antenna, agc, gain, frequency, sample_rate, bandwidth]
 );
+crate::registry::impl_typed_device_backend!(Dummy, Driver::Dummy);
 
 crate::impl_dyn_async_device_backend!(
     Dummy => [rx, tx, antenna, agc, gain, frequency, sample_rate, bandwidth]

@@ -150,7 +150,6 @@ pub mod dev {
     pub use crate::async_device::DynAsyncRxDevice;
     pub use crate::async_device::DynAsyncSampleRateControl;
     pub use crate::async_device::DynAsyncTxDevice;
-    pub use crate::async_registry::AsyncDriverBackend;
     pub use crate::async_registry::AsyncTypedDeviceBackend;
     pub use crate::async_streamer::DynAsyncRxStreamerBackend;
     pub use crate::async_streamer::DynAsyncTxStreamerBackend;
@@ -159,7 +158,6 @@ pub mod dev {
     pub use crate::device::DynTxDevice;
     pub use crate::impl_dyn_async_device_backend;
     pub use crate::impl_dyn_device_backend;
-    pub use crate::registry::DriverBackend;
     pub use crate::registry::TypedDeviceBackend;
 }
 

@@ -141,6 +141,7 @@ crate::impl_dyn_device_backend!(
         dc_offset
     ]
 );
+crate::registry::impl_typed_device_backend!(Soapy, Driver::Soapy);
 
 impl RxDevice for Soapy {
     type RxStreamer = RxStreamer;

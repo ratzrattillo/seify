@@ -465,6 +465,7 @@ impl DeviceInfo for HackRfOne {
 crate::impl_dyn_device_backend!(
     HackRfOne => [rx, antenna, gain, frequency, sample_rate, bandwidth]
 );
+crate::registry::impl_typed_device_backend!(HackRfOne, crate::Driver::HackRf);
 
 impl RxDevice for HackRfOne {
     type RxStreamer = RxStreamer;

@@ -1,33 +1,10 @@
 use std::future::Future;
 
 use crate::async_device::{AsyncDeviceInfo, DynAsyncDeviceBackend};
-#[cfg(any(
-    feature = "dummy",
-    all(
-        feature = "hydrasdr",
-        any(feature = "smol", feature = "tokio"),
-        not(target_arch = "wasm32")
-    )
-))]
 use crate::AsyncFutureExt;
 use crate::{
     Args, BoxedFuture, Capability, DeviceDescriptor, Driver, DynAsyncDevice, Error, MaybeSend,
-    MaybeSync,
 };
-
-/// Asynchronous driver discovery/opening backend.
-pub trait AsyncDriverBackend: MaybeSend + MaybeSync {
-    /// Driver handled by this backend.
-    fn driver(&self) -> Driver;
-    /// Probe devices matching `args`.
-    fn probe<'a>(&'a self, args: &'a Args)
-        -> BoxedFuture<'a, Result<Vec<DeviceDescriptor>, Error>>;
-    /// Open a previously discovered device descriptor.
-    fn open<'a>(
-        &'a self,
-        descriptor: &'a DeviceDescriptor,
-    ) -> BoxedFuture<'a, Result<DynAsyncDevice, Error>>;
-}
 
 /// Typed asynchronous driver implementation that can be opened directly.
 ///
@@ -49,9 +26,61 @@ pub trait AsyncTypedDeviceBackend:
         -> impl Future<Output = Result<Self, Error>> + MaybeSend + 'a;
 }
 
+type ProbeFuture<'a> = BoxedFuture<'a, Result<Vec<DeviceDescriptor>, Error>>;
+type OpenFuture<'a> = BoxedFuture<'a, Result<DynAsyncDevice, Error>>;
+
+struct RegisteredAsyncDriver {
+    driver: Driver,
+    probe: for<'a> fn(&'a Args) -> ProbeFuture<'a>,
+    open: for<'a> fn(&'a DeviceDescriptor) -> OpenFuture<'a>,
+}
+
+impl RegisteredAsyncDriver {
+    fn new<D: AsyncTypedDeviceBackend>() -> Self {
+        Self {
+            driver: <D as AsyncTypedDeviceBackend>::driver(),
+            probe: probe_typed::<D>,
+            open: open_typed::<D>,
+        }
+    }
+
+    fn driver(&self) -> Driver {
+        self.driver
+    }
+
+    fn probe<'a>(&self, args: &'a Args) -> ProbeFuture<'a> {
+        (self.probe)(args)
+    }
+
+    fn open<'a>(&self, descriptor: &'a DeviceDescriptor) -> OpenFuture<'a> {
+        (self.open)(descriptor)
+    }
+}
+
+fn probe_typed<D: AsyncTypedDeviceBackend>(args: &Args) -> ProbeFuture<'_> {
+    async move {
+        D::async_probe(args).await.map(|descriptors| {
+            descriptors
+                .into_iter()
+                .map(|args| DeviceDescriptor::new(<D as AsyncTypedDeviceBackend>::driver(), args))
+                .collect()
+        })
+    }
+    .boxed_async()
+}
+
+fn open_typed<D: AsyncTypedDeviceBackend>(descriptor: &DeviceDescriptor) -> OpenFuture<'_> {
+    async move {
+        Ok(DynAsyncDevice::from_impl(
+            D::async_open(descriptor.args()).await?,
+        ))
+    }
+    .boxed_async()
+}
+
 /// Registry of asynchronous driver discovery/opening backends.
 pub struct AsyncRegistry {
-    backends: Vec<Box<dyn AsyncDriverBackend>>,
+    backends: Vec<RegisteredAsyncDriver>,
 }
 
 impl AsyncRegistry {
@@ -62,12 +91,12 @@ impl AsyncRegistry {
         }
     }
 
-    /// Register an asynchronous driver backend.
-    pub fn register<B>(&mut self, backend: B) -> &mut Self
+    /// Register a typed built-in asynchronous driver.
+    pub fn register<D>(&mut self) -> &mut Self
     where
-        B: AsyncDriverBackend + 'static,
+        D: AsyncTypedDeviceBackend,
     {
-        self.backends.push(Box::new(backend));
+        self.backends.push(RegisteredAsyncDriver::new::<D>());
         self
     }
 
@@ -92,13 +121,7 @@ impl AsyncRegistry {
 
         if let Some(driver) = driver {
             if !matched_backend {
-                if async_builtin_driver_enabled(driver) {
-                    return Err(Error::unsupported_reason(
-                        Capability::DriverOperation,
-                        format!("driver {driver:?} does not expose an async API"),
-                    ));
-                }
-                return Err(Error::DriverFeatureNotEnabled { driver });
+                return Err(unavailable_driver(driver));
             }
         }
 
@@ -126,13 +149,7 @@ impl AsyncRegistry {
         }
 
         if !matched_backend {
-            if async_builtin_driver_enabled(driver) {
-                return Err(Error::unsupported_reason(
-                    Capability::DriverOperation,
-                    format!("driver {driver:?} does not expose an async API"),
-                ));
-            }
-            return Err(Error::DriverFeatureNotEnabled { driver });
+            return Err(unavailable_driver(driver));
         }
 
         Err(Error::DeviceNotFound)
@@ -172,18 +189,14 @@ impl Default for AsyncRegistry {
         let mut registry = Self::empty();
 
         #[cfg(feature = "dummy")]
-        registry.register(BuiltinAsyncDriver::<crate::impls::Dummy>::new(
-            Driver::Dummy,
-        ));
+        registry.register::<crate::impls::Dummy>();
 
         #[cfg(all(
             feature = "hydrasdr",
             any(feature = "smol", feature = "tokio"),
             not(target_arch = "wasm32")
         ))]
-        registry.register(BuiltinAsyncDriver::<crate::impls::AsyncHydraSdr>::new(
-            Driver::HydraSdr,
-        ));
+        registry.register::<crate::impls::AsyncHydraSdr>();
 
         registry
     }
@@ -197,93 +210,16 @@ fn requested_driver(args: &Args) -> Result<Option<Driver>, Error> {
     }
 }
 
-fn async_builtin_driver_enabled(driver: Driver) -> bool {
-    match driver {
-        Driver::AaroniaHttp => cfg!(all(feature = "aaronia_http", not(target_arch = "wasm32"))),
-        Driver::BladeRf => cfg!(all(feature = "bladerf1", not(target_arch = "wasm32"))),
-        Driver::Dummy => cfg!(feature = "dummy"),
-        Driver::HackRf => cfg!(all(feature = "hackrfone", not(target_arch = "wasm32"))),
-        Driver::HydraSdr => cfg!(all(
-            feature = "hydrasdr",
-            any(feature = "smol", feature = "tokio"),
-            not(target_arch = "wasm32")
-        )),
-        Driver::RtlSdr => cfg!(all(feature = "rtlsdr", not(target_arch = "wasm32"))),
-        Driver::Soapy => cfg!(all(feature = "soapy", not(target_arch = "wasm32"))),
-    }
-}
-
-#[cfg(any(
-    feature = "dummy",
-    all(
-        feature = "hydrasdr",
-        any(feature = "smol", feature = "tokio"),
-        not(target_arch = "wasm32")
-    )
-))]
-struct BuiltinAsyncDriver<D> {
-    driver: Driver,
-    _device: std::marker::PhantomData<D>,
-}
-
-#[cfg(any(
-    feature = "dummy",
-    all(
-        feature = "hydrasdr",
-        any(feature = "smol", feature = "tokio"),
-        not(target_arch = "wasm32")
-    )
-))]
-impl<D> BuiltinAsyncDriver<D> {
-    fn new(driver: Driver) -> Self {
-        Self {
-            driver,
-            _device: std::marker::PhantomData,
-        }
-    }
-}
-
-#[cfg(any(
-    feature = "dummy",
-    all(
-        feature = "hydrasdr",
-        any(feature = "smol", feature = "tokio"),
-        not(target_arch = "wasm32")
-    )
-))]
-impl<D> AsyncDriverBackend for BuiltinAsyncDriver<D>
-where
-    D: AsyncTypedDeviceBackend + MaybeSend + MaybeSync,
-{
-    fn driver(&self) -> Driver {
-        self.driver
-    }
-
-    fn probe<'a>(
-        &'a self,
-        args: &'a Args,
-    ) -> BoxedFuture<'a, Result<Vec<DeviceDescriptor>, Error>> {
-        async move {
-            D::async_probe(args).await.map(|descriptors| {
-                descriptors
-                    .into_iter()
-                    .map(|args| DeviceDescriptor::new(self.driver, args))
-                    .collect()
-            })
-        }
-        .boxed_async()
-    }
-
-    fn open<'a>(
-        &'a self,
-        descriptor: &'a DeviceDescriptor,
-    ) -> BoxedFuture<'a, Result<DynAsyncDevice, Error>> {
-        async move {
-            Ok(DynAsyncDevice::from_impl(
-                D::async_open(descriptor.args()).await?,
-            ))
-        }
-        .boxed_async()
+fn unavailable_driver(driver: Driver) -> Error {
+    if !matches!(driver, Driver::Dummy | Driver::HydraSdr)
+        && crate::Registry::default().contains(driver)
+    {
+        Error::unsupported_reason(
+            Capability::DriverOperation,
+            format!("driver {driver:?} does not expose an async API"),
+        )
+    } else {
+        Error::DriverFeatureNotEnabled { driver }
     }
 }
 
