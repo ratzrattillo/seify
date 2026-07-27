@@ -45,7 +45,7 @@ fn bladerf_err(e: libbladerf_rs::Error) -> Error {
 
 fn convert_sc16q11_to_complex32(src: &[u8], dst: &mut [Complex32]) -> usize {
     let len = (src.len() / 4).min(dst.len());
-    for (chunk, out) in src.chunks_exact(4).take(len).zip(dst.iter_mut()) {
+    for (chunk, out) in src.as_chunks::<4>().0.iter().take(len).zip(dst.iter_mut()) {
         let i_val = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 * INV_2048;
         let q_val = i16::from_le_bytes([chunk[2], chunk[3]]) as f32 * INV_2048;
         *out = Complex32::new(i_val, q_val);
@@ -55,7 +55,7 @@ fn convert_sc16q11_to_complex32(src: &[u8], dst: &mut [Complex32]) -> usize {
 
 fn convert_sc8q7_to_complex32(src: &[u8], dst: &mut [Complex32]) -> usize {
     let len = (src.len() / 2).min(dst.len());
-    for (chunk, out) in src.chunks_exact(2).take(len).zip(dst.iter_mut()) {
+    for (chunk, out) in src.as_chunks::<2>().0.iter().take(len).zip(dst.iter_mut()) {
         let i_val = (chunk[0] as i8) as f32 * INV_128;
         let q_val = (chunk[1] as i8) as f32 * INV_128;
         *out = Complex32::new(i_val, q_val);
@@ -107,7 +107,11 @@ fn convert_bytes_to_complex32(
 
 fn convert_complex32_to_sc16q11(src: &[Complex32], dst: &mut [u8]) -> usize {
     let len = src.len().min(dst.len() / 4);
-    for (s, chunk) in src.iter().take(len).zip(dst.chunks_exact_mut(4)) {
+    for (s, chunk) in src
+        .iter()
+        .take(len)
+        .zip(dst.as_chunks_mut::<4>().0.iter_mut())
+    {
         let i_val = (s.re * 2048.0).clamp(-2048.0, 2047.999) as i16;
         let q_val = (s.im * 2048.0).clamp(-2048.0, 2047.999) as i16;
         chunk[..2].copy_from_slice(&i_val.to_le_bytes());
@@ -118,7 +122,11 @@ fn convert_complex32_to_sc16q11(src: &[Complex32], dst: &mut [u8]) -> usize {
 
 fn convert_complex32_to_sc8q7(src: &[Complex32], dst: &mut [u8]) -> usize {
     let len = src.len().min(dst.len() / 2);
-    for (s, chunk) in src.iter().take(len).zip(dst.chunks_exact_mut(2)) {
+    for (s, chunk) in src
+        .iter()
+        .take(len)
+        .zip(dst.as_chunks_mut::<2>().0.iter_mut())
+    {
         let i_val = (s.re * 128.0).clamp(-128.0, 127.999) as i8;
         let q_val = (s.im * 128.0).clamp(-128.0, 127.999) as i8;
         chunk[0] = i_val as u8;
