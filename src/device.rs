@@ -857,7 +857,7 @@ pub struct Device<T> {
 
 impl<T> Device<T>
 where
-    T: DeviceInfo,
+    T: DeviceInfo + Clone,
 {
     /// Create a device from the device implementation.
     pub fn from_impl(dev: T) -> Self {
@@ -1805,7 +1805,8 @@ mod tests {
     #[derive(Clone)]
     struct RxOnly;
 
-    struct DcToggle(std::sync::Mutex<bool>);
+    #[derive(Clone)]
+    struct DcToggle(std::sync::Arc<std::sync::Mutex<bool>>);
 
     struct TestRxStreamer;
 
@@ -2031,7 +2032,7 @@ mod tests {
 
     #[test]
     fn dc_offset_handle_controls_enabled_state() {
-        let dev = Device::from_impl(DcToggle(std::sync::Mutex::new(false)));
+        let dev = Device::from_impl(DcToggle(std::sync::Arc::new(std::sync::Mutex::new(false))));
         let rx0 = RxChannel::new(&dev.dev, 0);
         let dc_offset = rx0.dc_offset();
 

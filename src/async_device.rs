@@ -1510,7 +1510,7 @@ pub struct AsyncDevice<T> {
     dev: T,
 }
 
-impl<T: AsyncDeviceInfo> AsyncDevice<T> {
+impl<T: AsyncDeviceInfo + Clone> AsyncDevice<T> {
     /// Create a device from the device implementation.
     pub fn from_impl(dev: T) -> Self {
         Self { dev }
