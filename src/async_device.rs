@@ -32,10 +32,6 @@ pub type DynAsyncTxStreamer = Box<dyn DynAsyncTxStreamerBackend>;
 /// `impl Future + MaybeSend` spelling in the trait keeps returned futures
 /// `Send` on native targets while allowing local futures on `wasm32`.
 pub trait AsyncDeviceInfo: MaybeSend + MaybeSync {
-    /// Cast to [`Any`] for downcasting.
-    fn as_any(&self) -> &dyn Any;
-    /// Cast to [`Any`] for mutable downcasting.
-    fn as_any_mut(&mut self) -> &mut dyn Any;
     /// SDR driver.
     fn driver(&self) -> Driver;
     /// Identifier for the device, e.g. its serial.
@@ -78,7 +74,7 @@ pub trait AsyncTxDevice: AsyncDeviceInfo {
 }
 
 /// Asynchronous antenna control capability.
-pub trait AsyncAntennaControl: MaybeSend + MaybeSync {
+pub trait AsyncAntennaControl: AsyncDeviceInfo {
     /// Return available antenna port names.
     fn async_antennas(
         &self,
@@ -101,7 +97,7 @@ pub trait AsyncAntennaControl: MaybeSend + MaybeSync {
 }
 
 /// Asynchronous automatic gain control capability.
-pub trait AsyncAgcControl: MaybeSend + MaybeSync {
+pub trait AsyncAgcControl: AsyncDeviceInfo {
     /// Return whether automatic gain control is available.
     fn async_agc_available(
         &self,
@@ -124,7 +120,7 @@ pub trait AsyncAgcControl: MaybeSend + MaybeSync {
 }
 
 /// Asynchronous gain control capability.
-pub trait AsyncGainControl: MaybeSend + MaybeSync {
+pub trait AsyncGainControl: AsyncDeviceInfo {
     /// Return named gain elements available for the channel.
     fn async_gain_elements(
         &self,
@@ -175,7 +171,7 @@ pub trait AsyncGainControl: MaybeSend + MaybeSync {
 }
 
 /// Asynchronous frequency control capability.
-pub trait AsyncFrequencyControl: MaybeSend + MaybeSync {
+pub trait AsyncFrequencyControl: AsyncDeviceInfo {
     /// Return supported overall tuning range in Hz.
     fn async_frequency_range(
         &self,
@@ -227,7 +223,7 @@ pub trait AsyncFrequencyControl: MaybeSend + MaybeSync {
 }
 
 /// Asynchronous sample-rate control capability.
-pub trait AsyncSampleRateControl: MaybeSend + MaybeSync {
+pub trait AsyncSampleRateControl: AsyncDeviceInfo {
     /// Return current sample rate in samples per second.
     fn async_sample_rate(
         &self,
@@ -250,7 +246,7 @@ pub trait AsyncSampleRateControl: MaybeSend + MaybeSync {
 }
 
 /// Asynchronous bandwidth control capability.
-pub trait AsyncBandwidthControl: MaybeSend + MaybeSync {
+pub trait AsyncBandwidthControl: AsyncDeviceInfo {
     /// Return current channel bandwidth in Hz.
     fn async_bandwidth(
         &self,
@@ -273,7 +269,7 @@ pub trait AsyncBandwidthControl: MaybeSend + MaybeSync {
 }
 
 /// Asynchronous automatic DC offset correction capability.
-pub trait AsyncDcOffsetControl: MaybeSend + MaybeSync {
+pub trait AsyncDcOffsetControl: AsyncDeviceInfo {
     /// Return whether automatic DC offset correction is available.
     fn async_dc_offset_available(
         &self,
@@ -297,10 +293,6 @@ pub trait AsyncDcOffsetControl: MaybeSend + MaybeSync {
 
 /// Object-safe asynchronous device metadata.
 pub trait DynAsyncDeviceInfo: MaybeSend + MaybeSync {
-    /// Cast to [`Any`] for downcasting.
-    fn dyn_as_any(&self) -> &dyn Any;
-    /// Cast to [`Any`] for mutable downcasting.
-    fn dyn_as_any_mut(&mut self) -> &mut dyn Any;
     /// SDR driver.
     fn dyn_driver(&self) -> Driver;
     /// Identifier for the device, e.g. its serial.
@@ -317,14 +309,6 @@ impl<T> DynAsyncDeviceInfo for T
 where
     T: AsyncDeviceInfo,
 {
-    fn dyn_as_any(&self) -> &dyn Any {
-        AsyncDeviceInfo::as_any(self)
-    }
-
-    fn dyn_as_any_mut(&mut self) -> &mut dyn Any {
-        AsyncDeviceInfo::as_any_mut(self)
-    }
-
     fn dyn_driver(&self) -> Driver {
         AsyncDeviceInfo::driver(self)
     }
@@ -347,7 +331,7 @@ where
 }
 
 /// Object-safe asynchronous RX streaming capability.
-pub trait DynAsyncRxDevice: MaybeSend + MaybeSync {
+pub trait DynAsyncRxDevice: DynAsyncDeviceInfo {
     /// Create a type-erased asynchronous RX streamer.
     fn dyn_rx_streamer<'a>(
         &'a self,
@@ -377,7 +361,7 @@ where
 }
 
 /// Object-safe asynchronous TX streaming capability.
-pub trait DynAsyncTxDevice: MaybeSend + MaybeSync {
+pub trait DynAsyncTxDevice: DynAsyncDeviceInfo {
     /// Create a type-erased asynchronous TX streamer.
     fn dyn_tx_streamer<'a>(
         &'a self,
@@ -407,7 +391,7 @@ where
 }
 
 /// Object-safe asynchronous antenna control capability.
-pub trait DynAsyncAntennaControl: MaybeSend + MaybeSync {
+pub trait DynAsyncAntennaControl: DynAsyncDeviceInfo {
     /// Return available antenna port names.
     fn dyn_antennas(
         &self,
@@ -460,7 +444,7 @@ where
 }
 
 /// Object-safe asynchronous automatic gain control capability.
-pub trait DynAsyncAgcControl: MaybeSend + MaybeSync {
+pub trait DynAsyncAgcControl: DynAsyncDeviceInfo {
     /// Return whether automatic gain control is available.
     fn dyn_agc_available(
         &self,
@@ -513,7 +497,7 @@ where
 }
 
 /// Object-safe asynchronous gain control capability.
-pub trait DynAsyncGainControl: MaybeSend + MaybeSync {
+pub trait DynAsyncGainControl: DynAsyncDeviceInfo {
     /// Return named gain elements available for the channel.
     fn dyn_gain_elements(
         &self,
@@ -630,7 +614,7 @@ where
 }
 
 /// Object-safe asynchronous frequency control capability.
-pub trait DynAsyncFrequencyControl: MaybeSend + MaybeSync {
+pub trait DynAsyncFrequencyControl: DynAsyncDeviceInfo {
     /// Return supported overall tuning range in Hz.
     fn dyn_frequency_range(
         &self,
@@ -755,7 +739,7 @@ where
 }
 
 /// Object-safe asynchronous sample-rate control capability.
-pub trait DynAsyncSampleRateControl: MaybeSend + MaybeSync {
+pub trait DynAsyncSampleRateControl: DynAsyncDeviceInfo {
     /// Return current sample rate in samples per second.
     fn dyn_sample_rate(
         &self,
@@ -808,7 +792,7 @@ where
 }
 
 /// Object-safe asynchronous bandwidth control capability.
-pub trait DynAsyncBandwidthControl: MaybeSend + MaybeSync {
+pub trait DynAsyncBandwidthControl: DynAsyncDeviceInfo {
     /// Return current channel bandwidth in Hz.
     fn dyn_bandwidth(
         &self,
@@ -862,7 +846,7 @@ where
 }
 
 /// Object-safe asynchronous automatic DC offset correction capability.
-pub trait DynAsyncDcOffsetControl: MaybeSend + MaybeSync {
+pub trait DynAsyncDcOffsetControl: DynAsyncDeviceInfo {
     /// Return whether automatic DC offset correction is available.
     fn dyn_dc_offset_available(
         &self,
@@ -921,7 +905,13 @@ where
 /// return `Some(self)` from the accessors below. The `DynAsync*` traits are
 /// blanket adapter traits for runtime dispatch and normally do not need manual
 /// implementations.
-pub trait AsyncDynDeviceBackend: DynAsyncDeviceInfo + MaybeSend + MaybeSync {
+pub trait DynAsyncDeviceBackend: DynAsyncDeviceInfo + MaybeSend + MaybeSync {
+    /// Cast to [`Any`] for downcasting.
+    fn as_any(&self) -> &dyn Any;
+
+    /// Cast to [`Any`] for mutable downcasting.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+
     /// Return a structured snapshot of the device's runtime capabilities.
     fn async_capabilities(&self) -> BoxedFuture<'_, Result<DeviceCapabilities, Error>> {
         async { async_device_capabilities(self).await }.boxed_async()
@@ -975,16 +965,16 @@ pub trait AsyncDynDeviceBackend: DynAsyncDeviceInfo + MaybeSend + MaybeSync {
 
 /// Runtime-dispatched asynchronous opened device.
 #[derive(Clone)]
-pub struct AsyncDynDevice {
-    inner: Shared<dyn AsyncDynDeviceBackend>,
+pub struct DynAsyncDevice {
+    inner: Shared<dyn DynAsyncDeviceBackend>,
 }
 
 async fn async_device_capabilities<D>(dev: &D) -> Result<DeviceCapabilities, Error>
 where
-    D: AsyncDynDeviceBackend + ?Sized,
+    D: DynAsyncDeviceBackend + ?Sized,
 {
     Ok(DeviceCapabilities {
-        full_duplex: optional_capability(dev.dyn_full_duplex().await)?,
+        full_duplex: dev.dyn_full_duplex().await?,
         rx_channels: async_channel_capabilities(dev, Direction::Rx).await?,
         tx_channels: async_channel_capabilities(dev, Direction::Tx).await?,
     })
@@ -995,7 +985,7 @@ async fn async_channel_capabilities<D>(
     direction: Direction,
 ) -> Result<Vec<ChannelCapabilities>, Error>
 where
-    D: AsyncDynDeviceBackend + ?Sized,
+    D: DynAsyncDeviceBackend + ?Sized,
 {
     let channels = dev.dyn_num_channels(direction).await?;
 
@@ -1520,7 +1510,7 @@ pub struct AsyncDevice<T> {
     dev: T,
 }
 
-impl<T> AsyncDevice<T> {
+impl<T: AsyncDeviceInfo> AsyncDevice<T> {
     /// Create a device from the device implementation.
     pub fn from_impl(dev: T) -> Self {
         Self { dev }
@@ -1570,19 +1560,31 @@ where
 
 impl<T> AsyncDevice<T>
 where
-    T: AsyncDynDeviceBackend + Clone + 'static,
+    T: DynAsyncDeviceBackend + Clone + 'static,
 {
     /// Clone this typed device into a runtime-dispatched asynchronous device.
     ///
     /// Backend clones must refer to the same opened logical device and share
     /// configuration state.
-    pub fn to_dyn(&self) -> AsyncDynDevice {
-        AsyncDynDevice::from_impl(self.dev.clone())
+    pub fn to_dyn(&self) -> DynAsyncDevice {
+        DynAsyncDevice::from_impl(self.dev.clone())
     }
 
     /// Convert this typed device into a runtime-dispatched asynchronous device.
-    pub fn into_dyn(self) -> AsyncDynDevice {
-        AsyncDynDevice::from_impl(self.dev)
+    pub fn into_dyn(self) -> DynAsyncDevice {
+        DynAsyncDevice::from_impl(self.dev)
+    }
+}
+
+impl<T> AsyncDevice<T>
+where
+    T: DynAsyncDeviceBackend,
+{
+    /// Structured runtime capabilities for the device.
+    pub fn capabilities(
+        &self,
+    ) -> impl Future<Output = Result<DeviceCapabilities, Error>> + MaybeSend + '_ {
+        self.dev.async_capabilities()
     }
 }
 
@@ -1616,7 +1618,311 @@ impl<T: AsyncDeviceInfo> AsyncDevice<T> {
     }
 }
 
-impl AsyncDynDevice {
+impl<T: AsyncDeviceInfo> AsyncDeviceInfo for AsyncDevice<T> {
+    fn driver(&self) -> Driver {
+        self.dev.driver()
+    }
+
+    async fn async_id(&self) -> Result<String, Error> {
+        self.dev.async_id().await
+    }
+
+    async fn async_info(&self) -> Result<Args, Error> {
+        self.dev.async_info().await
+    }
+
+    async fn async_num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        self.dev.async_num_channels(direction).await
+    }
+
+    async fn async_full_duplex(&self) -> Result<bool, Error> {
+        self.dev.async_full_duplex().await
+    }
+}
+
+impl<T: AsyncRxDevice> AsyncRxDevice for AsyncDevice<T> {
+    type RxStreamer = T::RxStreamer;
+
+    async fn async_rx_streamer(
+        &self,
+        channels: &[usize],
+        args: Args,
+    ) -> Result<Self::RxStreamer, Error> {
+        self.dev.async_rx_streamer(channels, args).await
+    }
+}
+
+impl<T: AsyncTxDevice> AsyncTxDevice for AsyncDevice<T> {
+    type TxStreamer = T::TxStreamer;
+
+    async fn async_tx_streamer(
+        &self,
+        channels: &[usize],
+        args: Args,
+    ) -> Result<Self::TxStreamer, Error> {
+        self.dev.async_tx_streamer(channels, args).await
+    }
+}
+
+impl<T: AsyncAntennaControl> AsyncAntennaControl for AsyncDevice<T> {
+    async fn async_antennas(
+        &self,
+        direction: Direction,
+        channel: usize,
+    ) -> Result<Vec<String>, Error> {
+        self.dev.async_antennas(direction, channel).await
+    }
+
+    async fn async_antenna(&self, direction: Direction, channel: usize) -> Result<String, Error> {
+        self.dev.async_antenna(direction, channel).await
+    }
+
+    async fn async_set_antenna(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+    ) -> Result<(), Error> {
+        self.dev.async_set_antenna(direction, channel, name).await
+    }
+}
+
+impl<T: AsyncAgcControl> AsyncAgcControl for AsyncDevice<T> {
+    async fn async_agc_available(
+        &self,
+        direction: Direction,
+        channel: usize,
+    ) -> Result<bool, Error> {
+        self.dev.async_agc_available(direction, channel).await
+    }
+
+    async fn async_agc_enabled(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
+        self.dev.async_agc_enabled(direction, channel).await
+    }
+
+    async fn async_set_agc_enabled(
+        &self,
+        direction: Direction,
+        channel: usize,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        self.dev
+            .async_set_agc_enabled(direction, channel, enabled)
+            .await
+    }
+}
+
+impl<T: AsyncGainControl> AsyncGainControl for AsyncDevice<T> {
+    async fn async_gain_elements(
+        &self,
+        direction: Direction,
+        channel: usize,
+    ) -> Result<Vec<String>, Error> {
+        self.dev.async_gain_elements(direction, channel).await
+    }
+
+    async fn async_set_gain(
+        &self,
+        direction: Direction,
+        channel: usize,
+        gain: f64,
+    ) -> Result<(), Error> {
+        self.dev.async_set_gain(direction, channel, gain).await
+    }
+
+    async fn async_gain(&self, direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
+        self.dev.async_gain(direction, channel).await
+    }
+
+    async fn async_gain_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
+        self.dev.async_gain_range(direction, channel).await
+    }
+
+    async fn async_set_gain_element(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+        gain: f64,
+    ) -> Result<(), Error> {
+        self.dev
+            .async_set_gain_element(direction, channel, name, gain)
+            .await
+    }
+
+    async fn async_gain_element(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+    ) -> Result<Option<f64>, Error> {
+        self.dev.async_gain_element(direction, channel, name).await
+    }
+
+    async fn async_gain_element_range(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+    ) -> Result<Range, Error> {
+        self.dev
+            .async_gain_element_range(direction, channel, name)
+            .await
+    }
+}
+
+impl<T: AsyncFrequencyControl> AsyncFrequencyControl for AsyncDevice<T> {
+    async fn async_frequency_range(
+        &self,
+        direction: Direction,
+        channel: usize,
+    ) -> Result<Range, Error> {
+        self.dev.async_frequency_range(direction, channel).await
+    }
+
+    async fn async_frequency(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
+        self.dev.async_frequency(direction, channel).await
+    }
+
+    async fn async_set_frequency(
+        &self,
+        direction: Direction,
+        channel: usize,
+        frequency: f64,
+        args: Args,
+    ) -> Result<(), Error> {
+        self.dev
+            .async_set_frequency(direction, channel, frequency, args)
+            .await
+    }
+
+    async fn async_frequency_components(
+        &self,
+        direction: Direction,
+        channel: usize,
+    ) -> Result<Vec<String>, Error> {
+        self.dev
+            .async_frequency_components(direction, channel)
+            .await
+    }
+
+    async fn async_component_frequency_range(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+    ) -> Result<Range, Error> {
+        self.dev
+            .async_component_frequency_range(direction, channel, name)
+            .await
+    }
+
+    async fn async_component_frequency(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+    ) -> Result<f64, Error> {
+        self.dev
+            .async_component_frequency(direction, channel, name)
+            .await
+    }
+
+    async fn async_set_component_frequency(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+        frequency: f64,
+    ) -> Result<(), Error> {
+        self.dev
+            .async_set_component_frequency(direction, channel, name, frequency)
+            .await
+    }
+}
+
+impl<T: AsyncSampleRateControl> AsyncSampleRateControl for AsyncDevice<T> {
+    async fn async_sample_rate(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
+        self.dev.async_sample_rate(direction, channel).await
+    }
+
+    async fn async_set_sample_rate(
+        &self,
+        direction: Direction,
+        channel: usize,
+        rate: f64,
+    ) -> Result<(), Error> {
+        self.dev
+            .async_set_sample_rate(direction, channel, rate)
+            .await
+    }
+
+    async fn async_get_sample_rate_range(
+        &self,
+        direction: Direction,
+        channel: usize,
+    ) -> Result<Range, Error> {
+        self.dev
+            .async_get_sample_rate_range(direction, channel)
+            .await
+    }
+}
+
+impl<T: AsyncBandwidthControl> AsyncBandwidthControl for AsyncDevice<T> {
+    async fn async_bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
+        self.dev.async_bandwidth(direction, channel).await
+    }
+
+    async fn async_set_bandwidth(
+        &self,
+        direction: Direction,
+        channel: usize,
+        bandwidth: f64,
+    ) -> Result<(), Error> {
+        self.dev
+            .async_set_bandwidth(direction, channel, bandwidth)
+            .await
+    }
+
+    async fn async_get_bandwidth_range(
+        &self,
+        direction: Direction,
+        channel: usize,
+    ) -> Result<Range, Error> {
+        self.dev.async_get_bandwidth_range(direction, channel).await
+    }
+}
+
+impl<T: AsyncDcOffsetControl> AsyncDcOffsetControl for AsyncDevice<T> {
+    async fn async_dc_offset_available(
+        &self,
+        direction: Direction,
+        channel: usize,
+    ) -> Result<bool, Error> {
+        self.dev.async_dc_offset_available(direction, channel).await
+    }
+
+    async fn async_dc_offset_enabled(
+        &self,
+        direction: Direction,
+        channel: usize,
+    ) -> Result<bool, Error> {
+        self.dev.async_dc_offset_enabled(direction, channel).await
+    }
+
+    async fn async_set_dc_offset_enabled(
+        &self,
+        direction: Direction,
+        channel: usize,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        self.dev
+            .async_set_dc_offset_enabled(direction, channel, enabled)
+            .await
+    }
+}
+
+impl DynAsyncDevice {
     /// Open the first discovered runtime-dispatched asynchronous device.
     pub async fn new() -> Result<Self, Error> {
         let registry = AsyncRegistry::default();
@@ -1635,26 +1941,26 @@ impl AsyncDynDevice {
     }
 
     /// Create a runtime-dispatched asynchronous device from an implementation.
-    pub fn from_impl<T: AsyncDynDeviceBackend + Clone + 'static>(dev: T) -> Self {
+    pub fn from_impl<T: DynAsyncDeviceBackend + Clone + 'static>(dev: T) -> Self {
         Self {
             inner: Shared::new(dev),
         }
     }
 
     /// Borrow the dynamic backend.
-    pub fn as_backend(&self) -> &dyn AsyncDynDeviceBackend {
+    pub fn as_backend(&self) -> &dyn DynAsyncDeviceBackend {
         self.inner.as_ref()
     }
 
     /// Try to downcast to a concrete device implementation.
-    pub fn downcast_ref<D: AsyncDeviceInfo + 'static>(&self) -> Option<&D> {
-        self.inner.dyn_as_any().downcast_ref::<D>()
+    pub fn downcast_ref<D: DynAsyncDeviceBackend + 'static>(&self) -> Option<&D> {
+        self.inner.as_any().downcast_ref::<D>()
     }
 
     /// Try to downcast mutably to a concrete device implementation.
-    pub fn downcast_mut<D: AsyncDeviceInfo + 'static>(&mut self) -> Option<&mut D> {
+    pub fn downcast_mut<D: DynAsyncDeviceBackend + 'static>(&mut self) -> Option<&mut D> {
         Shared::get_mut(&mut self.inner)?
-            .dyn_as_any_mut()
+            .as_any_mut()
             .downcast_mut::<D>()
     }
 
@@ -1764,15 +2070,7 @@ impl AsyncDynDevice {
     }
 }
 
-impl AsyncDeviceInfo for AsyncDynDevice {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
+impl AsyncDeviceInfo for DynAsyncDevice {
     fn driver(&self) -> Driver {
         self.inner.dyn_driver()
     }
@@ -1793,7 +2091,7 @@ impl AsyncDeviceInfo for AsyncDynDevice {
     }
 }
 
-impl AsyncRxDevice for AsyncDynDevice {
+impl AsyncRxDevice for DynAsyncDevice {
     type RxStreamer = DynAsyncRxStreamer;
 
     async fn async_rx_streamer(
@@ -1809,7 +2107,7 @@ impl AsyncRxDevice for AsyncDynDevice {
     }
 }
 
-impl AsyncTxDevice for AsyncDynDevice {
+impl AsyncTxDevice for DynAsyncDevice {
     type TxStreamer = DynAsyncTxStreamer;
 
     async fn async_tx_streamer(
@@ -1827,7 +2125,7 @@ impl AsyncTxDevice for AsyncDynDevice {
 
 macro_rules! impl_dyn_control {
     ($trait_name:ident, $accessor:ident, $cap:expr, $($body:item),* $(,)?) => {
-        impl $trait_name for AsyncDynDevice {
+        impl $trait_name for DynAsyncDevice {
             $($body)*
         }
     };
@@ -1869,7 +2167,7 @@ impl_dyn_control!(
     }
 );
 
-impl AsyncAgcControl for AsyncDynDevice {
+impl AsyncAgcControl for DynAsyncDevice {
     async fn async_agc_available(
         &self,
         direction: Direction,
@@ -1904,7 +2202,7 @@ impl AsyncAgcControl for AsyncDynDevice {
     }
 }
 
-impl AsyncGainControl for AsyncDynDevice {
+impl AsyncGainControl for DynAsyncDevice {
     async fn async_gain_elements(
         &self,
         direction: Direction,
@@ -1981,7 +2279,7 @@ impl AsyncGainControl for AsyncDynDevice {
     }
 }
 
-impl AsyncFrequencyControl for AsyncDynDevice {
+impl AsyncFrequencyControl for DynAsyncDevice {
     async fn async_frequency_range(
         &self,
         direction: Direction,
@@ -2063,7 +2361,7 @@ impl AsyncFrequencyControl for AsyncDynDevice {
     }
 }
 
-impl AsyncSampleRateControl for AsyncDynDevice {
+impl AsyncSampleRateControl for DynAsyncDevice {
     async fn async_sample_rate(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
         self.inner
             .async_sample_rate_control()
@@ -2096,7 +2394,7 @@ impl AsyncSampleRateControl for AsyncDynDevice {
     }
 }
 
-impl AsyncBandwidthControl for AsyncDynDevice {
+impl AsyncBandwidthControl for DynAsyncDevice {
     async fn async_bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
         self.inner
             .async_bandwidth_control()
@@ -2129,7 +2427,7 @@ impl AsyncBandwidthControl for AsyncDynDevice {
     }
 }
 
-impl AsyncDcOffsetControl for AsyncDynDevice {
+impl AsyncDcOffsetControl for DynAsyncDevice {
     async fn async_dc_offset_available(
         &self,
         direction: Direction,
@@ -2339,7 +2637,7 @@ pub trait AsyncDriverBackend: MaybeSend + MaybeSync {
     fn open<'a>(
         &'a self,
         descriptor: &'a DeviceDescriptor,
-    ) -> BoxedFuture<'a, Result<AsyncDynDevice, Error>>;
+    ) -> BoxedFuture<'a, Result<DynAsyncDevice, Error>>;
 }
 
 /// Typed asynchronous driver implementation that can be opened directly.
@@ -2348,7 +2646,9 @@ pub trait AsyncDriverBackend: MaybeSend + MaybeSync {
 /// explicit trait return type enforces Seify's target-dependent `MaybeSend`
 /// future bound. Cloning an opened backend must create another handle to the
 /// same logical device and shared configuration state.
-pub trait AsyncTypedDeviceBackend: AsyncDynDeviceBackend + Clone + Sized + 'static {
+pub trait AsyncTypedDeviceBackend:
+    AsyncDeviceInfo + DynAsyncDeviceBackend + Clone + Sized + 'static
+{
     /// Driver implemented by this backend.
     fn driver() -> Driver;
     /// Probe devices matching `args`.
@@ -2420,7 +2720,7 @@ impl AsyncRegistry {
     pub async fn open<'a>(
         &'a self,
         descriptor: &'a DeviceDescriptor,
-    ) -> Result<AsyncDynDevice, Error> {
+    ) -> Result<DynAsyncDevice, Error> {
         let driver = descriptor.driver();
         let mut matched_backend = false;
 
@@ -2450,7 +2750,7 @@ impl AsyncRegistry {
     }
 
     /// Open the first asynchronous device matching `args`.
-    pub async fn open_args<'a, A>(&'a self, args: A) -> Result<AsyncDynDevice, Error>
+    pub async fn open_args<'a, A>(&'a self, args: A) -> Result<DynAsyncDevice, Error>
     where
         A: TryInto<Args> + MaybeSend + 'a,
     {
@@ -2542,14 +2842,6 @@ mod wasm_non_send_compile_check {
     }
 
     impl AsyncDeviceInfo for LocalOnly {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
-        fn as_any_mut(&mut self) -> &mut dyn Any {
-            self
-        }
-
         fn driver(&self) -> Driver {
             Driver::Dummy
         }
@@ -2574,7 +2866,15 @@ mod wasm_non_send_compile_check {
         }
     }
 
-    impl AsyncDynDeviceBackend for LocalOnly {
+    impl DynAsyncDeviceBackend for LocalOnly {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+
         fn async_rx_device(&self) -> Option<&dyn DynAsyncRxDevice> {
             Some(self)
         }
@@ -2624,7 +2924,7 @@ mod wasm_non_send_compile_check {
     }
 
     fn accepts_non_send_async_backend() {
-        let _dev = AsyncDynDevice::from_impl(LocalOnly {
+        let _dev = DynAsyncDevice::from_impl(LocalOnly {
             reads: Rc::new(RefCell::new(0)),
         });
     }
@@ -2694,9 +2994,9 @@ where
     fn open<'a>(
         &'a self,
         descriptor: &'a DeviceDescriptor,
-    ) -> BoxedFuture<'a, Result<AsyncDynDevice, Error>> {
+    ) -> BoxedFuture<'a, Result<DynAsyncDevice, Error>> {
         async move {
-            Ok(AsyncDynDevice::from_impl(
+            Ok(DynAsyncDevice::from_impl(
                 D::async_open(descriptor.args()).await?,
             ))
         }
@@ -2744,7 +3044,7 @@ mod tests {
     #[test]
     fn async_dyn_dummy_controls_and_streams() {
         block_on(async {
-            let dev = AsyncDynDevice::from_args("driver=dummy").await.unwrap();
+            let dev = DynAsyncDevice::from_args("driver=dummy").await.unwrap();
             let rx0 = dev.rx(0).await.unwrap();
 
             rx0.sample_rate().set(1.0e6).await.unwrap();
@@ -2779,6 +3079,24 @@ mod tests {
             let dev = AsyncDevice::<crate::impls::Dummy>::from_args("driver=dummy")
                 .await
                 .unwrap();
+
+            fn assert_typed_capabilities<D>(_dev: &D)
+            where
+                D: AsyncDeviceInfo
+                    + AsyncRxDevice
+                    + AsyncTxDevice
+                    + AsyncAntennaControl
+                    + AsyncAgcControl
+                    + AsyncGainControl
+                    + AsyncFrequencyControl
+                    + AsyncSampleRateControl
+                    + AsyncBandwidthControl,
+            {
+            }
+
+            assert_typed_capabilities(&dev);
+            assert!(dev.capabilities().await.unwrap().full_duplex);
+
             let dyn_dev = dev.to_dyn();
 
             dev.rx(0)
@@ -2807,7 +3125,7 @@ mod tests {
             assert!(dev.downcast_ref::<crate::impls::Dummy>().is_some());
 
             let capabilities = dev.capabilities().await.unwrap();
-            assert_eq!(capabilities.full_duplex, Some(true));
+            assert!(capabilities.full_duplex);
             assert_eq!(capabilities.rx_channels.len(), 1);
             assert_eq!(capabilities.tx_channels.len(), 1);
             assert_eq!(

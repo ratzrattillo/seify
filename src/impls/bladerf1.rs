@@ -738,14 +738,6 @@ impl BladeRf {
 }
 
 impl DeviceInfo for BladeRf {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
     fn driver(&self) -> crate::Driver {
         BladeRf::driver(self)
     }
@@ -768,6 +760,14 @@ impl DeviceInfo for BladeRf {
 }
 
 impl DynDeviceBackend for BladeRf {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }

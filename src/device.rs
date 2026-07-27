@@ -22,7 +22,7 @@ pub type DynRxStreamer = Box<dyn RxStreamer>;
 pub type DynTxStreamer = Box<dyn TxStreamer>;
 
 /// Object-safe RX streaming capability for runtime-dispatched devices.
-pub trait DynRxDevice: Send + Sync {
+pub trait DynRxDevice: DeviceInfo {
     /// Create a type-erased RX streamer.
     fn rx_streamer(&self, channels: &[usize], args: Args) -> Result<DynRxStreamer, Error>;
 }
@@ -38,7 +38,7 @@ where
 }
 
 /// Object-safe TX streaming capability for runtime-dispatched devices.
-pub trait DynTxDevice: Send + Sync {
+pub trait DynTxDevice: DeviceInfo {
     /// Create a type-erased TX streamer.
     fn tx_streamer(&self, channels: &[usize], args: Args) -> Result<DynTxStreamer, Error>;
 }
@@ -58,6 +58,12 @@ where
 /// The dynamic backend exposes fundamental device metadata and optional views
 /// into streaming and control capability traits.
 pub trait DynDeviceBackend: DeviceInfo + Send + Sync {
+    /// Cast to [`Any`] for downcasting.
+    fn as_any(&self) -> &dyn Any;
+
+    /// Cast to [`Any`] for mutable downcasting.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+
     /// Return a structured snapshot of the device's runtime capabilities.
     fn capabilities(&self) -> Result<DeviceCapabilities, Error> {
         DeviceCapabilities::from_dyn(self)
@@ -122,7 +128,7 @@ pub struct DynDevice {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeviceCapabilities {
     /// Whether this device supports simultaneous reception and transmission.
-    pub full_duplex: Option<bool>,
+    pub full_duplex: bool,
     /// RX channels exposed by this device.
     pub rx_channels: Vec<ChannelCapabilities>,
     /// TX channels exposed by this device.
@@ -133,7 +139,7 @@ impl DeviceCapabilities {
     /// Build a capability snapshot from a runtime-dispatched backend.
     pub fn from_dyn<D: DynDeviceBackend + ?Sized>(dev: &D) -> Result<Self, Error> {
         Ok(Self {
-            full_duplex: optional_capability(dev.full_duplex())?,
+            full_duplex: dev.full_duplex()?,
             rx_channels: channel_capabilities(dev, Direction::Rx)?,
             tx_channels: channel_capabilities(dev, Direction::Tx)?,
         })
@@ -251,10 +257,6 @@ fn dyn_capability_available<C: ?Sized>(
 
 /// Basic device metadata.
 pub trait DeviceInfo: Send + Sync {
-    /// Cast to [`Any`] for downcasting.
-    fn as_any(&self) -> &dyn Any;
-    /// Cast to [`Any`] for mutable downcasting.
-    fn as_any_mut(&mut self) -> &mut dyn Any;
     /// SDR [driver](Driver).
     fn driver(&self) -> Driver;
     /// Identifier for the device, e.g. its serial.
@@ -286,7 +288,7 @@ pub trait TxDevice: DeviceInfo {
 }
 
 /// Antenna control capability.
-pub trait AntennaControl: Send + Sync {
+pub trait AntennaControl: DeviceInfo {
     /// Return available antenna port names.
     fn antennas(&self, direction: Direction, channel: usize) -> Result<Vec<String>, Error>;
     /// Return the currently selected antenna port name.
@@ -296,7 +298,7 @@ pub trait AntennaControl: Send + Sync {
 }
 
 /// Automatic gain control capability.
-pub trait AgcControl: Send + Sync {
+pub trait AgcControl: DeviceInfo {
     /// Return whether automatic gain control is available.
     fn agc_available(&self, direction: Direction, channel: usize) -> Result<bool, Error>;
     /// Return whether automatic gain control is currently enabled.
@@ -311,7 +313,7 @@ pub trait AgcControl: Send + Sync {
 }
 
 /// Gain control capability.
-pub trait GainControl: Send + Sync {
+pub trait GainControl: DeviceInfo {
     /// Return named gain elements available for the channel.
     fn gain_elements(&self, direction: Direction, channel: usize) -> Result<Vec<String>, Error>;
     /// Set overall channel gain in dB.
@@ -345,7 +347,7 @@ pub trait GainControl: Send + Sync {
 }
 
 /// Frequency control capability.
-pub trait FrequencyControl: Send + Sync {
+pub trait FrequencyControl: DeviceInfo {
     /// Return supported overall tuning range in Hz.
     fn frequency_range(&self, direction: Direction, channel: usize) -> Result<Range, Error>;
     /// Return current overall channel frequency in Hz.
@@ -389,7 +391,7 @@ pub trait FrequencyControl: Send + Sync {
 }
 
 /// Sample-rate control capability.
-pub trait SampleRateControl: Send + Sync {
+pub trait SampleRateControl: DeviceInfo {
     /// Return current sample rate in samples per second.
     fn sample_rate(&self, direction: Direction, channel: usize) -> Result<f64, Error>;
     /// Set sample rate in samples per second.
@@ -400,7 +402,7 @@ pub trait SampleRateControl: Send + Sync {
 }
 
 /// Bandwidth control capability.
-pub trait BandwidthControl: Send + Sync {
+pub trait BandwidthControl: DeviceInfo {
     /// Return current channel bandwidth in Hz.
     fn bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error>;
     /// Set channel bandwidth in Hz.
@@ -410,7 +412,7 @@ pub trait BandwidthControl: Send + Sync {
 }
 
 /// Automatic DC offset correction capability.
-pub trait DcOffsetControl: Send + Sync {
+pub trait DcOffsetControl: DeviceInfo {
     /// Return whether automatic DC offset correction is available.
     fn dc_offset_available(&self, direction: Direction, channel: usize) -> Result<bool, Error>;
     /// Return whether automatic DC offset correction is enabled.
@@ -855,7 +857,7 @@ pub struct Device<T> {
 
 impl<T> Device<T>
 where
-    T: Send + Sync,
+    T: DeviceInfo,
 {
     /// Create a device from the device implementation.
     pub fn from_impl(dev: T) -> Self {
@@ -919,6 +921,16 @@ where
     }
 }
 
+impl<T> Device<T>
+where
+    T: DynDeviceBackend,
+{
+    /// Structured runtime capabilities for the device.
+    pub fn capabilities(&self) -> Result<DeviceCapabilities, Error> {
+        self.dev.capabilities()
+    }
+}
+
 impl<T: DeviceInfo> Device<T> {
     /// SDR [driver](Driver).
     pub fn driver(&self) -> Driver {
@@ -944,21 +956,231 @@ impl<T: DeviceInfo> Device<T> {
     pub fn full_duplex(&self) -> Result<bool, Error> {
         self.dev.full_duplex()
     }
+}
 
-    /// Borrow the underlying device implementation as type `D`.
-    pub fn impl_ref<D: DeviceInfo + 'static>(&self) -> Result<&D, Error> {
-        self.dev
-            .as_any()
-            .downcast_ref::<D>()
-            .ok_or_else(|| Error::invalid_argument("type", "device implementation type mismatch"))
+impl<T: DeviceInfo> DeviceInfo for Device<T> {
+    fn driver(&self) -> Driver {
+        self.dev.driver()
     }
 
-    /// Mutably borrow the underlying device implementation as type `D`.
-    pub fn impl_mut<D: DeviceInfo + 'static>(&mut self) -> Result<&mut D, Error> {
+    fn id(&self) -> Result<String, Error> {
+        self.dev.id()
+    }
+
+    fn info(&self) -> Result<Args, Error> {
+        self.dev.info()
+    }
+
+    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        self.dev.num_channels(direction)
+    }
+
+    fn full_duplex(&self) -> Result<bool, Error> {
+        self.dev.full_duplex()
+    }
+}
+
+impl<T: RxDevice> RxDevice for Device<T> {
+    type RxStreamer = T::RxStreamer;
+
+    fn rx_streamer(&self, channels: &[usize], args: Args) -> Result<Self::RxStreamer, Error> {
+        self.dev.rx_streamer(channels, args)
+    }
+}
+
+impl<T: TxDevice> TxDevice for Device<T> {
+    type TxStreamer = T::TxStreamer;
+
+    fn tx_streamer(&self, channels: &[usize], args: Args) -> Result<Self::TxStreamer, Error> {
+        self.dev.tx_streamer(channels, args)
+    }
+}
+
+impl<T: AntennaControl> AntennaControl for Device<T> {
+    fn antennas(&self, direction: Direction, channel: usize) -> Result<Vec<String>, Error> {
+        self.dev.antennas(direction, channel)
+    }
+
+    fn antenna(&self, direction: Direction, channel: usize) -> Result<String, Error> {
+        self.dev.antenna(direction, channel)
+    }
+
+    fn set_antenna(&self, direction: Direction, channel: usize, name: &str) -> Result<(), Error> {
+        self.dev.set_antenna(direction, channel, name)
+    }
+}
+
+impl<T: AgcControl> AgcControl for Device<T> {
+    fn agc_available(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
+        self.dev.agc_available(direction, channel)
+    }
+
+    fn agc_enabled(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
+        self.dev.agc_enabled(direction, channel)
+    }
+
+    fn set_agc_enabled(
+        &self,
+        direction: Direction,
+        channel: usize,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        self.dev.set_agc_enabled(direction, channel, enabled)
+    }
+}
+
+impl<T: GainControl> GainControl for Device<T> {
+    fn gain_elements(&self, direction: Direction, channel: usize) -> Result<Vec<String>, Error> {
+        self.dev.gain_elements(direction, channel)
+    }
+
+    fn set_gain(&self, direction: Direction, channel: usize, gain: f64) -> Result<(), Error> {
+        self.dev.set_gain(direction, channel, gain)
+    }
+
+    fn gain(&self, direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
+        self.dev.gain(direction, channel)
+    }
+
+    fn gain_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
+        self.dev.gain_range(direction, channel)
+    }
+
+    fn set_gain_element(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+        gain: f64,
+    ) -> Result<(), Error> {
+        self.dev.set_gain_element(direction, channel, name, gain)
+    }
+
+    fn gain_element(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+    ) -> Result<Option<f64>, Error> {
+        self.dev.gain_element(direction, channel, name)
+    }
+
+    fn gain_element_range(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+    ) -> Result<Range, Error> {
+        self.dev.gain_element_range(direction, channel, name)
+    }
+}
+
+impl<T: FrequencyControl> FrequencyControl for Device<T> {
+    fn frequency_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
+        self.dev.frequency_range(direction, channel)
+    }
+
+    fn frequency(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
+        self.dev.frequency(direction, channel)
+    }
+
+    fn set_frequency(
+        &self,
+        direction: Direction,
+        channel: usize,
+        frequency: f64,
+        args: Args,
+    ) -> Result<(), Error> {
+        self.dev.set_frequency(direction, channel, frequency, args)
+    }
+
+    fn frequency_components(
+        &self,
+        direction: Direction,
+        channel: usize,
+    ) -> Result<Vec<String>, Error> {
+        self.dev.frequency_components(direction, channel)
+    }
+
+    fn component_frequency_range(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+    ) -> Result<Range, Error> {
+        self.dev.component_frequency_range(direction, channel, name)
+    }
+
+    fn component_frequency(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+    ) -> Result<f64, Error> {
+        self.dev.component_frequency(direction, channel, name)
+    }
+
+    fn set_component_frequency(
+        &self,
+        direction: Direction,
+        channel: usize,
+        name: &str,
+        frequency: f64,
+    ) -> Result<(), Error> {
         self.dev
-            .as_any_mut()
-            .downcast_mut::<D>()
-            .ok_or_else(|| Error::invalid_argument("type", "device implementation type mismatch"))
+            .set_component_frequency(direction, channel, name, frequency)
+    }
+}
+
+impl<T: SampleRateControl> SampleRateControl for Device<T> {
+    fn sample_rate(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
+        self.dev.sample_rate(direction, channel)
+    }
+
+    fn set_sample_rate(
+        &self,
+        direction: Direction,
+        channel: usize,
+        rate: f64,
+    ) -> Result<(), Error> {
+        self.dev.set_sample_rate(direction, channel, rate)
+    }
+
+    fn get_sample_rate_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
+        self.dev.get_sample_rate_range(direction, channel)
+    }
+}
+
+impl<T: BandwidthControl> BandwidthControl for Device<T> {
+    fn bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
+        self.dev.bandwidth(direction, channel)
+    }
+
+    fn set_bandwidth(&self, direction: Direction, channel: usize, bw: f64) -> Result<(), Error> {
+        self.dev.set_bandwidth(direction, channel, bw)
+    }
+
+    fn get_bandwidth_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
+        self.dev.get_bandwidth_range(direction, channel)
+    }
+}
+
+impl<T: DcOffsetControl> DcOffsetControl for Device<T> {
+    fn dc_offset_available(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
+        self.dev.dc_offset_available(direction, channel)
+    }
+
+    fn dc_offset_enabled(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
+        self.dev.dc_offset_enabled(direction, channel)
+    }
+
+    fn set_dc_offset_enabled(
+        &self,
+        direction: Direction,
+        channel: usize,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        self.dev.set_dc_offset_enabled(direction, channel, enabled)
     }
 }
 
@@ -989,12 +1211,12 @@ impl DynDevice {
     }
 
     /// Try to downcast to a concrete device implementation.
-    pub fn downcast_ref<D: DeviceInfo + 'static>(&self) -> Option<&D> {
+    pub fn downcast_ref<D: DynDeviceBackend + 'static>(&self) -> Option<&D> {
         self.inner.as_any().downcast_ref::<D>()
     }
 
     /// Try to downcast mutably to a concrete device implementation.
-    pub fn downcast_mut<D: DeviceInfo + 'static>(&mut self) -> Option<&mut D> {
+    pub fn downcast_mut<D: DynDeviceBackend + 'static>(&mut self) -> Option<&mut D> {
         Arc::get_mut(&mut self.inner)?
             .as_any_mut()
             .downcast_mut::<D>()
@@ -1088,14 +1310,6 @@ impl DynDevice {
 }
 
 impl DeviceInfo for DynDevice {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
     fn driver(&self) -> Driver {
         self.inner.driver()
     }
@@ -1596,14 +1810,6 @@ mod tests {
     struct TestRxStreamer;
 
     impl DeviceInfo for RxOnly {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
-        fn as_any_mut(&mut self) -> &mut dyn Any {
-            self
-        }
-
         fn driver(&self) -> Driver {
             Driver::Dummy
         }
@@ -1629,6 +1835,14 @@ mod tests {
     }
 
     impl DynDeviceBackend for RxOnly {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+
         fn rx_device(&self) -> Option<&dyn DynRxDevice> {
             Some(self)
         }
@@ -1645,6 +1859,31 @@ mod tests {
                     "unsupported RX channel set",
                 )),
             }
+        }
+    }
+
+    impl DeviceInfo for DcToggle {
+        fn driver(&self) -> Driver {
+            Driver::Dummy
+        }
+
+        fn id(&self) -> Result<String, Error> {
+            Ok("dc-toggle".to_string())
+        }
+
+        fn info(&self) -> Result<Args, Error> {
+            Ok(Args::new())
+        }
+
+        fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
+            match direction {
+                Direction::Rx => Ok(1),
+                Direction::Tx => Ok(0),
+            }
+        }
+
+        fn full_duplex(&self) -> Result<bool, Error> {
+            Ok(false)
         }
     }
 
@@ -1714,7 +1953,7 @@ mod tests {
         let capabilities = dev.capabilities().unwrap();
 
         assert!(dev.full_duplex().unwrap());
-        assert_eq!(capabilities.full_duplex, Some(true));
+        assert!(capabilities.full_duplex);
         assert_eq!(capabilities.rx_channels.len(), 1);
         assert_eq!(capabilities.tx_channels.len(), 1);
 
@@ -1746,6 +1985,24 @@ mod tests {
     fn typed_device_converts_to_dyn_device_and_downcasts() {
         let dummy = crate::impls::Dummy::open(Args::new()).unwrap();
         let dev = Device::from_impl(dummy);
+
+        fn assert_typed_capabilities<D>(_dev: &D)
+        where
+            D: DeviceInfo
+                + RxDevice
+                + TxDevice
+                + AntennaControl
+                + AgcControl
+                + GainControl
+                + FrequencyControl
+                + SampleRateControl
+                + BandwidthControl,
+        {
+        }
+
+        assert_typed_capabilities(&dev);
+        assert!(dev.capabilities().unwrap().full_duplex);
+
         let dyn_dev = dev.to_dyn();
 
         dev.rx(0).unwrap().frequency().set(100.0e6).unwrap();

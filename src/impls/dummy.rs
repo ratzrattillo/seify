@@ -2,7 +2,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::dev::{AsyncDynDeviceBackend, AsyncTypedDeviceBackend, DynDeviceBackend};
+use crate::dev::{AsyncTypedDeviceBackend, DynAsyncDeviceBackend, DynDeviceBackend};
 use crate::AgcControl;
 use crate::AntennaControl;
 use crate::Args;
@@ -83,14 +83,6 @@ impl Dummy {
 }
 
 impl DeviceInfo for Dummy {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
     fn driver(&self) -> Driver {
         Driver::Dummy
     }
@@ -115,14 +107,6 @@ impl DeviceInfo for Dummy {
 }
 
 impl AsyncDeviceInfo for Dummy {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
     fn driver(&self) -> Driver {
         Driver::Dummy
     }
@@ -145,6 +129,14 @@ impl AsyncDeviceInfo for Dummy {
 }
 
 impl DynDeviceBackend for Dummy {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
@@ -178,7 +170,15 @@ impl DynDeviceBackend for Dummy {
     }
 }
 
-impl AsyncDynDeviceBackend for Dummy {
+impl DynAsyncDeviceBackend for Dummy {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
     fn async_rx_device(&self) -> Option<&dyn crate::dev::DynAsyncRxDevice> {
         Some(self)
     }

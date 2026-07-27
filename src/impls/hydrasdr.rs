@@ -20,7 +20,7 @@ use crate::Direction::*;
 #[cfg(any(feature = "smol", feature = "tokio"))]
 use crate::{
     async_compat::{timeout_from_micros, with_timeout, TimeoutResult},
-    dev::{AsyncDynDeviceBackend, AsyncTypedDeviceBackend},
+    dev::{AsyncTypedDeviceBackend, DynAsyncDeviceBackend},
     AsyncAgcControl, AsyncAntennaControl, AsyncBandwidthControl, AsyncDeviceInfo,
     AsyncFrequencyControl, AsyncGainControl, AsyncRxDevice, AsyncSampleRateControl,
 };
@@ -1143,14 +1143,6 @@ impl AsyncHydraSdr {
 }
 
 impl DeviceInfo for HydraSdr {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
     fn driver(&self) -> Driver {
         HydraSdr::driver(self)
     }
@@ -1173,6 +1165,14 @@ impl DeviceInfo for HydraSdr {
 }
 
 impl DynDeviceBackend for HydraSdr {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
@@ -1390,14 +1390,6 @@ impl BandwidthControl for HydraSdr {
 
 #[cfg(any(feature = "smol", feature = "tokio"))]
 impl AsyncDeviceInfo for AsyncHydraSdr {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
     fn driver(&self) -> Driver {
         AsyncHydraSdr::driver(self)
     }
@@ -1420,7 +1412,15 @@ impl AsyncDeviceInfo for AsyncHydraSdr {
 }
 
 #[cfg(any(feature = "smol", feature = "tokio"))]
-impl AsyncDynDeviceBackend for AsyncHydraSdr {
+impl DynAsyncDeviceBackend for AsyncHydraSdr {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn async_rx_device(&self) -> Option<&dyn crate::dev::DynAsyncRxDevice> {
         Some(self)
     }

@@ -99,14 +99,6 @@ impl Soapy {
 }
 
 impl DeviceInfo for Soapy {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
     fn driver(&self) -> Driver {
         Driver::Soapy
     }
@@ -138,6 +130,14 @@ impl DeviceInfo for Soapy {
 }
 
 impl DynDeviceBackend for Soapy {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }

@@ -462,14 +462,6 @@ impl RtlSdr {
 }
 
 impl DeviceInfo for RtlSdr {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
     fn driver(&self) -> Driver {
         RtlSdr::driver(self)
     }
@@ -492,6 +484,14 @@ impl DeviceInfo for RtlSdr {
 }
 
 impl DynDeviceBackend for RtlSdr {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
