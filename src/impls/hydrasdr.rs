@@ -22,17 +22,16 @@ use crate::{
     async_compat::{timeout_from_micros, with_timeout, TimeoutResult},
     dev::{
         AsyncDynDeviceBackend, AsyncTypedDeviceBackend, ErasedAsyncAgcControl,
-        ErasedAsyncAntennaControl, ErasedAsyncBandwidthControl, ErasedAsyncChannelInfo,
-        ErasedAsyncFrequencyControl, ErasedAsyncGainControl, ErasedAsyncRxDevice,
-        ErasedAsyncSampleRateControl,
+        ErasedAsyncAntennaControl, ErasedAsyncBandwidthControl, ErasedAsyncFrequencyControl,
+        ErasedAsyncGainControl, ErasedAsyncRxDevice, ErasedAsyncSampleRateControl,
     },
-    AsyncAgcControl, AsyncAntennaControl, AsyncBandwidthControl, AsyncChannelInfo, AsyncDeviceInfo,
+    AsyncAgcControl, AsyncAntennaControl, AsyncBandwidthControl, AsyncDeviceInfo,
     AsyncFrequencyControl, AsyncGainControl, AsyncRxDevice, AsyncSampleRateControl,
 };
 use crate::{
     dev::DynDeviceBackend, AgcControl, AntennaControl, Args, BandwidthControl, Capability,
-    ChannelInfo, DeviceInfo, Direction, Driver, Error, FrequencyControl, GainControl, Range,
-    RangeItem, RxDevice, SampleRateControl,
+    DeviceInfo, Direction, Driver, Error, FrequencyControl, GainControl, Range, RangeItem,
+    RxDevice, SampleRateControl,
 };
 
 const MTU: usize = 262_144 / 8;
@@ -288,7 +287,7 @@ impl HydraSdr {
         }
     }
 
-    fn full_duplex(&self, _direction: Direction, _channel: usize) -> Result<bool, Error> {
+    fn full_duplex(&self) -> Result<bool, Error> {
         Ok(false)
     }
 
@@ -719,7 +718,7 @@ impl AsyncHydraSdr {
         }
     }
 
-    async fn full_duplex(&self, _direction: Direction, _channel: usize) -> Result<bool, Error> {
+    async fn full_duplex(&self) -> Result<bool, Error> {
         Ok(false)
     }
 
@@ -1167,13 +1166,17 @@ impl DeviceInfo for HydraSdr {
     fn info(&self) -> Result<Args, Error> {
         HydraSdr::info(self)
     }
+
+    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        HydraSdr::num_channels(self, direction)
+    }
+
+    fn full_duplex(&self) -> Result<bool, Error> {
+        HydraSdr::full_duplex(self)
+    }
 }
 
 impl DynDeviceBackend for HydraSdr {
-    fn channel_info(&self) -> Option<&dyn ChannelInfo> {
-        Some(self)
-    }
-
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
@@ -1200,16 +1203,6 @@ impl DynDeviceBackend for HydraSdr {
 
     fn bandwidth_control(&self) -> Option<&dyn BandwidthControl> {
         Some(self)
-    }
-}
-
-impl ChannelInfo for HydraSdr {
-    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        HydraSdr::num_channels(self, direction)
-    }
-
-    fn full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        HydraSdr::full_duplex(self, direction, channel)
     }
 }
 
@@ -1420,14 +1413,18 @@ impl AsyncDeviceInfo for AsyncHydraSdr {
     async fn async_info(&self) -> Result<Args, Error> {
         AsyncHydraSdr::info(self).await
     }
+
+    async fn async_num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        AsyncHydraSdr::num_channels(self, direction).await
+    }
+
+    async fn async_full_duplex(&self) -> Result<bool, Error> {
+        AsyncHydraSdr::full_duplex(self).await
+    }
 }
 
 #[cfg(any(feature = "smol", feature = "tokio"))]
 impl AsyncDynDeviceBackend for AsyncHydraSdr {
-    fn async_channel_info(&self) -> Option<&dyn ErasedAsyncChannelInfo> {
-        Some(self)
-    }
-
     fn async_rx_device(&self) -> Option<&dyn ErasedAsyncRxDevice> {
         Some(self)
     }
@@ -1454,17 +1451,6 @@ impl AsyncDynDeviceBackend for AsyncHydraSdr {
 
     fn async_bandwidth_control(&self) -> Option<&dyn ErasedAsyncBandwidthControl> {
         Some(self)
-    }
-}
-
-#[cfg(any(feature = "smol", feature = "tokio"))]
-impl AsyncChannelInfo for AsyncHydraSdr {
-    async fn async_num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        AsyncHydraSdr::num_channels(self, direction).await
-    }
-
-    async fn async_full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        AsyncHydraSdr::full_duplex(self, direction, channel).await
     }
 }
 

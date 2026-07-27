@@ -42,25 +42,17 @@ pub trait AsyncDeviceInfo: MaybeSend + MaybeSync {
     fn async_id(&self) -> impl Future<Output = Result<String, Error>> + MaybeSend + '_;
     /// Device info that can be displayed to the user.
     fn async_info(&self) -> impl Future<Output = Result<Args, Error>> + MaybeSend + '_;
-}
-
-/// Basic asynchronous channel metadata.
-pub trait AsyncChannelInfo: MaybeSend + MaybeSync {
     /// Number of supported channels.
     fn async_num_channels(
         &self,
         direction: Direction,
     ) -> impl Future<Output = Result<usize, Error>> + MaybeSend + '_;
-    /// Full-duplex support.
-    fn async_full_duplex(
-        &self,
-        direction: Direction,
-        channel: usize,
-    ) -> impl Future<Output = Result<bool, Error>> + MaybeSend + '_;
+    /// Whether this device supports simultaneous reception and transmission.
+    fn async_full_duplex(&self) -> impl Future<Output = Result<bool, Error>> + MaybeSend + '_;
 }
 
 /// Asynchronous RX streaming capability.
-pub trait AsyncRxDevice: MaybeSend + MaybeSync {
+pub trait AsyncRxDevice: AsyncDeviceInfo {
     /// RX streamer implementation.
     type RxStreamer: AsyncRxStreamer;
 
@@ -73,7 +65,7 @@ pub trait AsyncRxDevice: MaybeSend + MaybeSync {
 }
 
 /// Asynchronous TX streaming capability.
-pub trait AsyncTxDevice: MaybeSend + MaybeSync {
+pub trait AsyncTxDevice: AsyncDeviceInfo {
     /// TX streamer implementation.
     type TxStreamer: AsyncTxStreamer;
 
@@ -315,6 +307,13 @@ pub trait ErasedAsyncDeviceInfo: MaybeSend + MaybeSync {
     fn erased_async_id(&self) -> BoxedFuture<'_, Result<String, Error>>;
     /// Device info that can be displayed to the user.
     fn erased_async_info(&self) -> BoxedFuture<'_, Result<Args, Error>>;
+    /// Number of supported channels.
+    fn erased_async_num_channels(
+        &self,
+        direction: Direction,
+    ) -> BoxedFuture<'_, Result<usize, Error>>;
+    /// Whether this device supports simultaneous reception and transmission.
+    fn erased_async_full_duplex(&self) -> BoxedFuture<'_, Result<bool, Error>>;
 }
 
 impl<T> ErasedAsyncDeviceInfo for T
@@ -340,40 +339,16 @@ where
     fn erased_async_info(&self) -> BoxedFuture<'_, Result<Args, Error>> {
         AsyncDeviceInfo::async_info(self).boxed_async()
     }
-}
 
-/// Object-safe asynchronous channel metadata.
-pub trait ErasedAsyncChannelInfo: MaybeSend + MaybeSync {
-    /// Number of supported channels.
-    fn erased_async_num_channels(
-        &self,
-        direction: Direction,
-    ) -> BoxedFuture<'_, Result<usize, Error>>;
-    /// Full-duplex support.
-    fn erased_async_full_duplex(
-        &self,
-        direction: Direction,
-        channel: usize,
-    ) -> BoxedFuture<'_, Result<bool, Error>>;
-}
-
-impl<T> ErasedAsyncChannelInfo for T
-where
-    T: AsyncChannelInfo,
-{
     fn erased_async_num_channels(
         &self,
         direction: Direction,
     ) -> BoxedFuture<'_, Result<usize, Error>> {
-        AsyncChannelInfo::async_num_channels(self, direction).boxed_async()
+        AsyncDeviceInfo::async_num_channels(self, direction).boxed_async()
     }
 
-    fn erased_async_full_duplex(
-        &self,
-        direction: Direction,
-        channel: usize,
-    ) -> BoxedFuture<'_, Result<bool, Error>> {
-        AsyncChannelInfo::async_full_duplex(self, direction, channel).boxed_async()
+    fn erased_async_full_duplex(&self) -> BoxedFuture<'_, Result<bool, Error>> {
+        AsyncDeviceInfo::async_full_duplex(self).boxed_async()
     }
 }
 
@@ -958,11 +933,6 @@ pub trait AsyncDynDeviceBackend: ErasedAsyncDeviceInfo + MaybeSend + MaybeSync {
         async { async_device_capabilities(self).await }.boxed_async()
     }
 
-    /// Return channel metadata capability, if exposed.
-    fn async_channel_info(&self) -> Option<&dyn ErasedAsyncChannelInfo> {
-        None
-    }
-
     /// Return RX streaming capability, if exposed.
     fn async_rx_device(&self) -> Option<&dyn ErasedAsyncRxDevice> {
         None
@@ -1020,6 +990,7 @@ where
     D: AsyncDynDeviceBackend + ?Sized,
 {
     Ok(DeviceCapabilities {
+        full_duplex: optional_capability(dev.erased_async_full_duplex().await)?,
         rx_channels: async_channel_capabilities(dev, Direction::Rx).await?,
         tx_channels: async_channel_capabilities(dev, Direction::Tx).await?,
     })
@@ -1032,24 +1003,12 @@ async fn async_channel_capabilities<D>(
 where
     D: AsyncDynDeviceBackend + ?Sized,
 {
-    let Some(channel_info) = dev.async_channel_info() else {
-        return Ok(Vec::new());
-    };
-    let channels = match channel_info.erased_async_num_channels(direction).await {
-        Ok(channels) => channels,
-        Err(e) if e.is_unsupported() => 0,
-        Err(e) => return Err(e),
-    };
+    let channels = dev.erased_async_num_channels(direction).await?;
 
     let mut out = Vec::with_capacity(channels);
     for channel in 0..channels {
         out.push(ChannelCapabilities {
             channel,
-            full_duplex: optional_capability(
-                channel_info
-                    .erased_async_full_duplex(direction, channel)
-                    .await,
-            )?,
             controls: ChannelControls {
                 antennas: optional_capability_async(dev.async_antenna_control(), |cap| {
                     cap.erased_async_antennas(direction, channel)
@@ -1648,6 +1607,19 @@ impl<T: AsyncDeviceInfo> AsyncDevice<T> {
     pub fn info(&self) -> impl Future<Output = Result<Args, Error>> + MaybeSend + '_ {
         self.dev.async_info()
     }
+
+    /// Number of supported channels.
+    pub fn num_channels(
+        &self,
+        direction: Direction,
+    ) -> impl Future<Output = Result<usize, Error>> + MaybeSend + '_ {
+        self.dev.async_num_channels(direction)
+    }
+
+    /// Whether this device supports simultaneous reception and transmission.
+    pub fn full_duplex(&self) -> impl Future<Output = Result<bool, Error>> + MaybeSend + '_ {
+        self.dev.async_full_duplex()
+    }
 }
 
 impl AsyncDynDevice {
@@ -1705,6 +1677,19 @@ impl AsyncDynDevice {
     /// Device info that can be displayed to the user.
     pub fn info(&self) -> impl Future<Output = Result<Args, Error>> + MaybeSend + '_ {
         self.inner.erased_async_info()
+    }
+
+    /// Number of supported channels.
+    pub fn num_channels(
+        &self,
+        direction: Direction,
+    ) -> impl Future<Output = Result<usize, Error>> + MaybeSend + '_ {
+        self.inner.erased_async_num_channels(direction)
+    }
+
+    /// Whether this device supports simultaneous reception and transmission.
+    pub fn full_duplex(&self) -> impl Future<Output = Result<bool, Error>> + MaybeSend + '_ {
+        self.inner.erased_async_full_duplex()
     }
 
     /// Structured runtime capabilities for the device.
@@ -1805,23 +1790,12 @@ impl AsyncDeviceInfo for AsyncDynDevice {
     async fn async_info(&self) -> Result<Args, Error> {
         self.inner.erased_async_info().await
     }
-}
-
-impl AsyncChannelInfo for AsyncDynDevice {
     async fn async_num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        self.inner
-            .async_channel_info()
-            .ok_or_else(|| Error::unsupported(Capability::ChannelInfo))?
-            .erased_async_num_channels(direction)
-            .await
+        self.inner.erased_async_num_channels(direction).await
     }
 
-    async fn async_full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        self.inner
-            .async_channel_info()
-            .ok_or_else(|| Error::unsupported(Capability::ChannelInfo))?
-            .erased_async_full_duplex(direction, channel)
-            .await
+    async fn async_full_duplex(&self) -> Result<bool, Error> {
+        self.inner.erased_async_full_duplex().await
     }
 }
 
@@ -2198,7 +2172,7 @@ impl AsyncDcOffsetControl for AsyncDynDevice {
     }
 }
 
-impl<T: AsyncChannelInfo> AsyncDevice<T> {
+impl<T: AsyncDeviceInfo> AsyncDevice<T> {
     /// RX channel handle.
     pub async fn rx(&self, index: usize) -> Result<AsyncRxChannel<'_, T>, Error> {
         async_ensure_channel(&self.dev, Direction::Rx, index).await?;
@@ -2214,7 +2188,7 @@ impl<T: AsyncChannelInfo> AsyncDevice<T> {
 
 async fn async_ensure_channel<T>(dev: &T, direction: Direction, channel: usize) -> Result<(), Error>
 where
-    T: AsyncChannelInfo + ?Sized,
+    T: AsyncDeviceInfo + ?Sized,
 {
     let available = dev.async_num_channels(direction).await?;
     if channel < available {
@@ -2224,7 +2198,7 @@ where
     }
 }
 
-impl<T: AsyncRxDevice + AsyncChannelInfo> AsyncDevice<T> {
+impl<T: AsyncRxDevice> AsyncDevice<T> {
     /// Create an RX streamer over one or more RX channels.
     pub fn rx_streamer<'a>(
         &'a self,
@@ -2246,7 +2220,7 @@ impl<T: AsyncRxDevice + AsyncChannelInfo> AsyncDevice<T> {
     }
 }
 
-impl<T: AsyncTxDevice + AsyncChannelInfo> AsyncDevice<T> {
+impl<T: AsyncTxDevice> AsyncDevice<T> {
     /// Create a TX streamer over one or more TX channels.
     pub fn tx_streamer<'a>(
         &'a self,
@@ -2301,20 +2275,6 @@ impl<'a, T: AsyncTxDevice + ?Sized> AsyncTxChannel<'a, T> {
             let channels = [self.channel];
             self.dev.async_tx_streamer(&channels, args).await
         }
-    }
-}
-
-impl<'a, T: AsyncChannelInfo + ?Sized> AsyncRxChannel<'a, T> {
-    /// Full-duplex support for this RX channel.
-    pub fn full_duplex(&self) -> impl Future<Output = Result<bool, Error>> + MaybeSend + '_ {
-        self.dev.async_full_duplex(Direction::Rx, self.channel)
-    }
-}
-
-impl<'a, T: AsyncChannelInfo + ?Sized> AsyncTxChannel<'a, T> {
-    /// Full-duplex support for this TX channel.
-    pub fn full_duplex(&self) -> impl Future<Output = Result<bool, Error>> + MaybeSend + '_ {
-        self.dev.async_full_duplex(Direction::Tx, self.channel)
     }
 }
 
@@ -2607,19 +2567,7 @@ mod wasm_non_send_compile_check {
         async fn async_info(&self) -> Result<Args, Error> {
             Ok(Args::new())
         }
-    }
 
-    impl AsyncDynDeviceBackend for LocalOnly {
-        fn async_channel_info(&self) -> Option<&dyn ErasedAsyncChannelInfo> {
-            Some(self)
-        }
-
-        fn async_rx_device(&self) -> Option<&dyn ErasedAsyncRxDevice> {
-            Some(self)
-        }
-    }
-
-    impl AsyncChannelInfo for LocalOnly {
         async fn async_num_channels(&self, direction: Direction) -> Result<usize, Error> {
             Ok(match direction {
                 Direction::Rx => 1,
@@ -2627,12 +2575,14 @@ mod wasm_non_send_compile_check {
             })
         }
 
-        async fn async_full_duplex(
-            &self,
-            _direction: Direction,
-            _channel: usize,
-        ) -> Result<bool, Error> {
+        async fn async_full_duplex(&self) -> Result<bool, Error> {
             Ok(false)
+        }
+    }
+
+    impl AsyncDynDeviceBackend for LocalOnly {
+        fn async_rx_device(&self) -> Option<&dyn ErasedAsyncRxDevice> {
+            Some(self)
         }
     }
 
@@ -2859,9 +2809,11 @@ mod tests {
             let dev = dev.into_dyn();
 
             assert_eq!(dev.driver(), Driver::Dummy);
+            assert!(dev.full_duplex().await.unwrap());
             assert!(dev.downcast_ref::<crate::impls::Dummy>().is_some());
 
             let capabilities = dev.capabilities().await.unwrap();
+            assert_eq!(capabilities.full_duplex, Some(true));
             assert_eq!(capabilities.rx_channels.len(), 1);
             assert_eq!(capabilities.tx_channels.len(), 1);
             assert_eq!(

@@ -4,9 +4,8 @@ use num_complex::Complex32;
 use seify_hackrfone::Config;
 
 use crate::{
-    dev::DynDeviceBackend, AntennaControl, Args, BandwidthControl, Capability, ChannelInfo,
-    DeviceInfo, Direction, Error, FrequencyControl, GainControl, Range, RangeItem, RxDevice,
-    SampleRateControl,
+    dev::DynDeviceBackend, AntennaControl, Args, BandwidthControl, Capability, DeviceInfo,
+    Direction, Error, FrequencyControl, GainControl, Range, RangeItem, RxDevice, SampleRateControl,
 };
 
 /// HackRF One device backend.
@@ -187,7 +186,7 @@ impl HackRfOne {
         })
     }
 
-    fn full_duplex(&self, _direction: Direction, _channel: usize) -> Result<bool, Error> {
+    fn full_duplex(&self) -> Result<bool, Error> {
         Ok(false)
     }
 
@@ -461,13 +460,17 @@ impl DeviceInfo for HackRfOne {
     fn info(&self) -> Result<crate::Args, Error> {
         HackRfOne::info(self)
     }
+
+    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        HackRfOne::num_channels(self, direction)
+    }
+
+    fn full_duplex(&self) -> Result<bool, Error> {
+        HackRfOne::full_duplex(self)
+    }
 }
 
 impl DynDeviceBackend for HackRfOne {
-    fn channel_info(&self) -> Option<&dyn ChannelInfo> {
-        Some(self)
-    }
-
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
@@ -490,16 +493,6 @@ impl DynDeviceBackend for HackRfOne {
 
     fn bandwidth_control(&self) -> Option<&dyn BandwidthControl> {
         Some(self)
-    }
-}
-
-impl ChannelInfo for HackRfOne {
-    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        HackRfOne::num_channels(self, direction)
-    }
-
-    fn full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        HackRfOne::full_duplex(self, direction, channel)
     }
 }
 

@@ -55,7 +55,6 @@ pub use async_device::AsyncAntenna;
 pub use async_device::AsyncAntennaControl;
 pub use async_device::AsyncBandwidth;
 pub use async_device::AsyncBandwidthControl;
-pub use async_device::AsyncChannelInfo;
 pub use async_device::AsyncDcOffset;
 pub use async_device::AsyncDcOffsetControl;
 pub use async_device::AsyncDevice;
@@ -82,7 +81,6 @@ pub use device::Bandwidth;
 pub use device::BandwidthControl;
 pub use device::ChannelCapabilities;
 pub use device::ChannelControls;
-pub use device::ChannelInfo;
 pub use device::DcOffset;
 pub use device::DcOffsetControl;
 pub use device::Device;
@@ -144,7 +142,6 @@ pub mod dev {
     pub use crate::async_device::ErasedAsyncAgcControl;
     pub use crate::async_device::ErasedAsyncAntennaControl;
     pub use crate::async_device::ErasedAsyncBandwidthControl;
-    pub use crate::async_device::ErasedAsyncChannelInfo;
     pub use crate::async_device::ErasedAsyncDcOffsetControl;
     pub use crate::async_device::ErasedAsyncDeviceInfo;
     pub use crate::async_device::ErasedAsyncFrequencyControl;
@@ -170,8 +167,6 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Capability {
-    /// Channel count or channel metadata.
-    ChannelInfo,
     /// Receive streaming.
     RxStreaming,
     /// Transmit streaming.

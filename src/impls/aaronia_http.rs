@@ -17,7 +17,6 @@ use crate::AntennaControl;
 use crate::Args;
 use crate::BandwidthControl;
 use crate::Capability;
-use crate::ChannelInfo;
 use crate::DeviceInfo;
 use crate::Direction;
 use crate::Direction::*;
@@ -232,15 +231,8 @@ impl AaroniaHttp {
         }
     }
 
-    fn full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        match (direction, channel) {
-            (Rx, 0 | 1) => Ok(true),
-            (Tx, 0) => Ok(true),
-            _ => Err(Error::invalid_argument(
-                "aaronia_http",
-                "invalid Aaronia HTTP argument",
-            )),
-        }
+    fn full_duplex(&self) -> Result<bool, Error> {
+        Ok(true)
     }
 
     fn antennas(&self, direction: Direction, channel: usize) -> Result<Vec<String>, Error> {
@@ -695,13 +687,17 @@ impl DeviceInfo for AaroniaHttp {
     fn info(&self) -> Result<Args, Error> {
         AaroniaHttp::info(self)
     }
+
+    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        AaroniaHttp::num_channels(self, direction)
+    }
+
+    fn full_duplex(&self) -> Result<bool, Error> {
+        AaroniaHttp::full_duplex(self)
+    }
 }
 
 impl DynDeviceBackend for AaroniaHttp {
-    fn channel_info(&self) -> Option<&dyn ChannelInfo> {
-        Some(self)
-    }
-
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
@@ -732,16 +728,6 @@ impl DynDeviceBackend for AaroniaHttp {
 
     fn bandwidth_control(&self) -> Option<&dyn BandwidthControl> {
         Some(self)
-    }
-}
-
-impl ChannelInfo for AaroniaHttp {
-    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        AaroniaHttp::num_channels(self, direction)
-    }
-
-    fn full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        AaroniaHttp::full_duplex(self, direction, channel)
     }
 }
 

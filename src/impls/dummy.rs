@@ -4,9 +4,8 @@ use std::sync::Mutex;
 
 use crate::dev::{
     AsyncDynDeviceBackend, AsyncTypedDeviceBackend, DynDeviceBackend, ErasedAsyncAgcControl,
-    ErasedAsyncAntennaControl, ErasedAsyncBandwidthControl, ErasedAsyncChannelInfo,
-    ErasedAsyncFrequencyControl, ErasedAsyncGainControl, ErasedAsyncRxDevice,
-    ErasedAsyncSampleRateControl, ErasedAsyncTxDevice,
+    ErasedAsyncAntennaControl, ErasedAsyncBandwidthControl, ErasedAsyncFrequencyControl,
+    ErasedAsyncGainControl, ErasedAsyncRxDevice, ErasedAsyncSampleRateControl, ErasedAsyncTxDevice,
 };
 use crate::AgcControl;
 use crate::AntennaControl;
@@ -14,7 +13,6 @@ use crate::Args;
 use crate::AsyncAgcControl;
 use crate::AsyncAntennaControl;
 use crate::AsyncBandwidthControl;
-use crate::AsyncChannelInfo;
 use crate::AsyncDeviceInfo;
 use crate::AsyncFrequencyControl;
 use crate::AsyncGainControl;
@@ -22,7 +20,6 @@ use crate::AsyncRxDevice;
 use crate::AsyncSampleRateControl;
 use crate::AsyncTxDevice;
 use crate::BandwidthControl;
-use crate::ChannelInfo;
 use crate::DeviceInfo;
 use crate::Direction;
 use crate::Direction::Rx;
@@ -111,6 +108,14 @@ impl DeviceInfo for Dummy {
         a.set("driver", "dummy");
         Ok(a)
     }
+
+    fn num_channels(&self, _direction: Direction) -> Result<usize, Error> {
+        Ok(1)
+    }
+
+    fn full_duplex(&self) -> Result<bool, Error> {
+        Ok(true)
+    }
 }
 
 impl AsyncDeviceInfo for Dummy {
@@ -133,13 +138,17 @@ impl AsyncDeviceInfo for Dummy {
     async fn async_info(&self) -> Result<Args, Error> {
         self.info()
     }
+
+    async fn async_num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        self.num_channels(direction)
+    }
+
+    async fn async_full_duplex(&self) -> Result<bool, Error> {
+        self.full_duplex()
+    }
 }
 
 impl DynDeviceBackend for Dummy {
-    fn channel_info(&self) -> Option<&dyn ChannelInfo> {
-        Some(self)
-    }
-
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
@@ -174,10 +183,6 @@ impl DynDeviceBackend for Dummy {
 }
 
 impl AsyncDynDeviceBackend for Dummy {
-    fn async_channel_info(&self) -> Option<&dyn ErasedAsyncChannelInfo> {
-        Some(self)
-    }
-
     fn async_rx_device(&self) -> Option<&dyn ErasedAsyncRxDevice> {
         Some(self)
     }
@@ -208,26 +213,6 @@ impl AsyncDynDeviceBackend for Dummy {
 
     fn async_bandwidth_control(&self) -> Option<&dyn ErasedAsyncBandwidthControl> {
         Some(self)
-    }
-}
-
-impl ChannelInfo for Dummy {
-    fn num_channels(&self, _direction: Direction) -> Result<usize, Error> {
-        Ok(1)
-    }
-
-    fn full_duplex(&self, _direction: Direction, _channel: usize) -> Result<bool, Error> {
-        Ok(true)
-    }
-}
-
-impl AsyncChannelInfo for Dummy {
-    async fn async_num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        self.num_channels(direction)
-    }
-
-    async fn async_full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        self.full_duplex(direction, channel)
     }
 }
 

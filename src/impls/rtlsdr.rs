@@ -13,7 +13,6 @@ use crate::AntennaControl;
 use crate::Args;
 use crate::BandwidthControl;
 use crate::Capability;
-use crate::ChannelInfo;
 use crate::DeviceInfo;
 use crate::Direction;
 use crate::Direction::*;
@@ -133,7 +132,7 @@ impl RtlSdr {
         }
     }
 
-    fn full_duplex(&self, _direction: Direction, _channel: usize) -> Result<bool, Error> {
+    fn full_duplex(&self) -> Result<bool, Error> {
         Ok(false)
     }
 
@@ -482,13 +481,17 @@ impl DeviceInfo for RtlSdr {
     fn info(&self) -> Result<Args, Error> {
         RtlSdr::info(self)
     }
+
+    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        RtlSdr::num_channels(self, direction)
+    }
+
+    fn full_duplex(&self) -> Result<bool, Error> {
+        RtlSdr::full_duplex(self)
+    }
 }
 
 impl DynDeviceBackend for RtlSdr {
-    fn channel_info(&self) -> Option<&dyn ChannelInfo> {
-        Some(self)
-    }
-
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
@@ -515,16 +518,6 @@ impl DynDeviceBackend for RtlSdr {
 
     fn bandwidth_control(&self) -> Option<&dyn BandwidthControl> {
         Some(self)
-    }
-}
-
-impl ChannelInfo for RtlSdr {
-    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        RtlSdr::num_channels(self, direction)
-    }
-
-    fn full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        RtlSdr::full_duplex(self, direction, channel)
     }
 }
 

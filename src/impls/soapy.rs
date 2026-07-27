@@ -7,7 +7,6 @@ use crate::AgcControl;
 use crate::AntennaControl;
 use crate::Args;
 use crate::BandwidthControl;
-use crate::ChannelInfo;
 use crate::DcOffsetControl;
 use crate::DeviceInfo;
 use crate::Direction;
@@ -119,13 +118,26 @@ impl DeviceInfo for Soapy {
     fn info(&self) -> Result<Args, Error> {
         Ok(self.args.clone())
     }
+
+    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        Ok(self.dev.num_channels(direction.into())?)
+    }
+
+    fn full_duplex(&self) -> Result<bool, Error> {
+        if self.dev.num_channels(Direction::Tx.into())? == 0 {
+            return Ok(false);
+        }
+        let channels = self.dev.num_channels(Direction::Rx.into())?;
+        for channel in 0..channels {
+            if self.dev.full_duplex(Direction::Rx.into(), channel)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
 impl DynDeviceBackend for Soapy {
-    fn channel_info(&self) -> Option<&dyn ChannelInfo> {
-        Some(self)
-    }
-
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
@@ -160,16 +172,6 @@ impl DynDeviceBackend for Soapy {
 
     fn dc_offset_control(&self) -> Option<&dyn DcOffsetControl> {
         Some(self)
-    }
-}
-
-impl ChannelInfo for Soapy {
-    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        Ok(self.dev.num_channels(direction.into())?)
-    }
-
-    fn full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        Ok(self.dev.full_duplex(direction.into(), channel)?)
     }
 }
 

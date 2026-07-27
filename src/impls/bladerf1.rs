@@ -1,7 +1,7 @@
 use crate::{
     dev::DynDeviceBackend, AgcControl, AntennaControl, Args, BandwidthControl, Capability,
-    ChannelInfo, DeviceInfo, Direction, DriverError, Error, FrequencyControl, GainControl, Range,
-    RangeItem, RxDevice, SampleRateControl, TxDevice,
+    DeviceInfo, Direction, DriverError, Error, FrequencyControl, GainControl, Range, RangeItem,
+    RxDevice, SampleRateControl, TxDevice,
 };
 use libbladerf_rs::bladerf1::hardware::lms6002d::dc_calibration::DcCalModule;
 use libbladerf_rs::bladerf1::hardware::lms6002d::gain::GainStage;
@@ -468,7 +468,7 @@ impl BladeRf {
         Ok(1)
     }
 
-    fn full_duplex(&self, _direction: Direction, _channel: usize) -> Result<bool, Error> {
+    fn full_duplex(&self) -> Result<bool, Error> {
         Ok(true)
     }
 
@@ -757,13 +757,17 @@ impl DeviceInfo for BladeRf {
     fn info(&self) -> Result<Args, Error> {
         BladeRf::info(self)
     }
+
+    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        BladeRf::num_channels(self, direction)
+    }
+
+    fn full_duplex(&self) -> Result<bool, Error> {
+        BladeRf::full_duplex(self)
+    }
 }
 
 impl DynDeviceBackend for BladeRf {
-    fn channel_info(&self) -> Option<&dyn ChannelInfo> {
-        Some(self)
-    }
-
     fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
         Some(self)
     }
@@ -794,16 +798,6 @@ impl DynDeviceBackend for BladeRf {
 
     fn bandwidth_control(&self) -> Option<&dyn BandwidthControl> {
         Some(self)
-    }
-}
-
-impl ChannelInfo for BladeRf {
-    fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        BladeRf::num_channels(self, direction)
-    }
-
-    fn full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        BladeRf::full_duplex(self, direction, channel)
     }
 }
 

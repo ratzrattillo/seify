@@ -55,18 +55,12 @@ where
 
 /// Runtime-dispatched device backend.
 ///
-/// The dynamic backend only exposes device metadata and optional views into
-/// capability traits. Individual controls live on the smaller capability traits
-/// instead of one mandatory universal device interface.
+/// The dynamic backend exposes fundamental device metadata and optional views
+/// into streaming and control capability traits.
 pub trait DynDeviceBackend: DeviceInfo + Send + Sync {
     /// Return a structured snapshot of the device's runtime capabilities.
     fn capabilities(&self) -> Result<DeviceCapabilities, Error> {
         DeviceCapabilities::from_dyn(self)
-    }
-
-    /// Return channel metadata capability, if the backend exposes it.
-    fn channel_info(&self) -> Option<&dyn ChannelInfo> {
-        None
     }
 
     /// Return RX streaming capability, if the backend exposes it.
@@ -127,6 +121,8 @@ pub struct DynDevice {
 /// Structured runtime capabilities for a device.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeviceCapabilities {
+    /// Whether this device supports simultaneous reception and transmission.
+    pub full_duplex: Option<bool>,
     /// RX channels exposed by this device.
     pub rx_channels: Vec<ChannelCapabilities>,
     /// TX channels exposed by this device.
@@ -137,6 +133,7 @@ impl DeviceCapabilities {
     /// Build a capability snapshot from a runtime-dispatched backend.
     pub fn from_dyn<D: DynDeviceBackend + ?Sized>(dev: &D) -> Result<Self, Error> {
         Ok(Self {
+            full_duplex: optional_capability(dev.full_duplex())?,
             rx_channels: channel_capabilities(dev, Direction::Rx)?,
             tx_channels: channel_capabilities(dev, Direction::Tx)?,
         })
@@ -148,8 +145,6 @@ impl DeviceCapabilities {
 pub struct ChannelCapabilities {
     /// Channel index within its direction.
     pub channel: usize,
-    /// Full-duplex support for this channel, if the backend exposes it.
-    pub full_duplex: Option<bool>,
     /// Optional controls exposed by this channel.
     pub controls: ChannelControls,
 }
@@ -181,20 +176,12 @@ fn channel_capabilities<D>(dev: &D, direction: Direction) -> Result<Vec<ChannelC
 where
     D: DynDeviceBackend + ?Sized,
 {
-    let Some(channel_info) = dev.channel_info() else {
-        return Ok(Vec::new());
-    };
-    let channels = match channel_info.num_channels(direction) {
-        Ok(channels) => channels,
-        Err(e) if e.is_unsupported() => 0,
-        Err(e) => return Err(e),
-    };
+    let channels = dev.num_channels(direction)?;
 
     (0..channels)
         .map(|channel| {
             Ok(ChannelCapabilities {
                 channel,
-                full_duplex: optional_capability(channel_info.full_duplex(direction, channel))?,
                 controls: ChannelControls {
                     antennas: optional_erased_capability(dev.antenna_control(), |cap| {
                         cap.antennas(direction, channel)
@@ -275,18 +262,14 @@ pub trait DeviceInfo: Send + Sync {
     fn id(&self) -> Result<String, Error>;
     /// Device info that can be displayed to the user.
     fn info(&self) -> Result<Args, Error>;
-}
-
-/// Basic channel metadata.
-pub trait ChannelInfo: Send + Sync {
     /// Number of supported channels.
     fn num_channels(&self, direction: Direction) -> Result<usize, Error>;
-    /// Full-duplex support.
-    fn full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error>;
+    /// Whether this device supports simultaneous reception and transmission.
+    fn full_duplex(&self) -> Result<bool, Error>;
 }
 
 /// RX streaming capability.
-pub trait RxDevice: Send + Sync {
+pub trait RxDevice: DeviceInfo {
     /// RX streamer implementation.
     type RxStreamer: RxStreamer;
 
@@ -295,7 +278,7 @@ pub trait RxDevice: Send + Sync {
 }
 
 /// TX streaming capability.
-pub trait TxDevice: Send + Sync {
+pub trait TxDevice: DeviceInfo {
     /// TX streamer implementation.
     type TxStreamer: TxStreamer;
 
@@ -953,6 +936,16 @@ impl<T: DeviceInfo> Device<T> {
         self.dev.info()
     }
 
+    /// Number of supported channels.
+    pub fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        self.dev.num_channels(direction)
+    }
+
+    /// Whether this device supports simultaneous reception and transmission.
+    pub fn full_duplex(&self) -> Result<bool, Error> {
+        self.dev.full_duplex()
+    }
+
     /// Borrow the underlying device implementation as type `D`.
     pub fn impl_ref<D: DeviceInfo + 'static>(&self) -> Result<&D, Error> {
         self.dev
@@ -1021,6 +1014,16 @@ impl DynDevice {
     /// Device info that can be displayed to the user.
     pub fn info(&self) -> Result<Args, Error> {
         self.inner.info()
+    }
+
+    /// Number of supported channels.
+    pub fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
+        self.inner.num_channels(direction)
+    }
+
+    /// Whether this device supports simultaneous reception and transmission.
+    pub fn full_duplex(&self) -> Result<bool, Error> {
+        self.inner.full_duplex()
     }
 
     /// Structured runtime capabilities for the device.
@@ -1103,22 +1106,11 @@ impl DeviceInfo for DynDevice {
     fn info(&self) -> Result<Args, Error> {
         self.inner.info()
     }
-}
-
-impl ChannelInfo for DynDevice {
     fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        self.inner
-            .as_ref()
-            .channel_info()
-            .ok_or_else(|| Error::unsupported(Capability::ChannelInfo))?
-            .num_channels(direction)
+        self.inner.num_channels(direction)
     }
-    fn full_duplex(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
-        self.inner
-            .as_ref()
-            .channel_info()
-            .ok_or_else(|| Error::unsupported(Capability::ChannelInfo))?
-            .full_duplex(direction, channel)
+    fn full_duplex(&self) -> Result<bool, Error> {
+        self.inner.full_duplex()
     }
 }
 
@@ -1449,7 +1441,7 @@ impl DcOffsetControl for DynDevice {
     }
 }
 
-impl<T: ChannelInfo> Device<T> {
+impl<T: DeviceInfo> Device<T> {
     /// RX channel handle.
     pub fn rx(&self, index: usize) -> Result<RxChannel<'_, T>, Error> {
         ensure_channel(&self.dev, Direction::Rx, index)?;
@@ -1465,7 +1457,7 @@ impl<T: ChannelInfo> Device<T> {
 
 fn ensure_channel<T>(dev: &T, direction: Direction, channel: usize) -> Result<(), Error>
 where
-    T: ChannelInfo + ?Sized,
+    T: DeviceInfo + ?Sized,
 {
     let available = dev.num_channels(direction)?;
     if channel < available {
@@ -1475,7 +1467,7 @@ where
     }
 }
 
-impl<T: RxDevice + ChannelInfo> Device<T> {
+impl<T: RxDevice> Device<T> {
     /// Create an RX streamer over one or more RX channels.
     pub fn rx_streamer(&self, channels: &[usize]) -> Result<T::RxStreamer, Error> {
         self.rx_streamer_with_args(channels, Args::new())
@@ -1494,7 +1486,7 @@ impl<T: RxDevice + ChannelInfo> Device<T> {
     }
 }
 
-impl<T: TxDevice + ChannelInfo> Device<T> {
+impl<T: TxDevice> Device<T> {
     /// Create a TX streamer over one or more TX channels.
     pub fn tx_streamer(&self, channels: &[usize]) -> Result<T::TxStreamer, Error> {
         self.tx_streamer_with_args(channels, Args::new())
@@ -1534,20 +1526,6 @@ impl<'a, T: TxDevice + ?Sized> TxChannel<'a, T> {
     /// Create a single-channel TX streamer, using `args`.
     pub fn streamer_with_args(&self, args: Args) -> Result<T::TxStreamer, Error> {
         self.dev.tx_streamer(&[self.channel], args)
-    }
-}
-
-impl<'a, T: ChannelInfo + ?Sized> RxChannel<'a, T> {
-    /// Full-duplex support for this RX channel.
-    pub fn full_duplex(&self) -> Result<bool, Error> {
-        self.dev.full_duplex(Direction::Rx, self.channel)
-    }
-}
-
-impl<'a, T: ChannelInfo + ?Sized> TxChannel<'a, T> {
-    /// Full-duplex support for this TX channel.
-    pub fn full_duplex(&self) -> Result<bool, Error> {
-        self.dev.full_duplex(Direction::Tx, self.channel)
     }
 }
 
@@ -1638,19 +1616,7 @@ mod tests {
         fn info(&self) -> Result<Args, Error> {
             Ok(Args::new())
         }
-    }
 
-    impl DynDeviceBackend for RxOnly {
-        fn channel_info(&self) -> Option<&dyn ChannelInfo> {
-            Some(self)
-        }
-
-        fn rx_device(&self) -> Option<&dyn DynRxDevice> {
-            Some(self)
-        }
-    }
-
-    impl ChannelInfo for RxOnly {
         fn num_channels(&self, direction: Direction) -> Result<usize, Error> {
             match direction {
                 Direction::Rx => Ok(1),
@@ -1658,8 +1624,14 @@ mod tests {
             }
         }
 
-        fn full_duplex(&self, _direction: Direction, _channel: usize) -> Result<bool, Error> {
+        fn full_duplex(&self) -> Result<bool, Error> {
             Ok(false)
+        }
+    }
+
+    impl DynDeviceBackend for RxOnly {
+        fn rx_device(&self) -> Option<&dyn DynRxDevice> {
+            Some(self)
         }
     }
 
@@ -1742,12 +1714,13 @@ mod tests {
 
         let capabilities = dev.capabilities().unwrap();
 
+        assert!(dev.full_duplex().unwrap());
+        assert_eq!(capabilities.full_duplex, Some(true));
         assert_eq!(capabilities.rx_channels.len(), 1);
         assert_eq!(capabilities.tx_channels.len(), 1);
 
         let rx0 = &capabilities.rx_channels[0];
         assert_eq!(rx0.channel, 0);
-        assert_eq!(rx0.full_duplex, Some(true));
         assert_eq!(rx0.controls.antennas, Some(vec!["A".to_string()]));
         assert!(rx0.controls.agc);
         assert_eq!(rx0.controls.gain_elements, Some(vec!["RF".to_string()]));
