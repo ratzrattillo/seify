@@ -2,7 +2,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::dev::{AsyncTypedDeviceBackend, DynAsyncDeviceBackend, DynDeviceBackend};
+use crate::dev::AsyncTypedDeviceBackend;
 use crate::AgcControl;
 use crate::AntennaControl;
 use crate::Args;
@@ -128,89 +128,13 @@ impl AsyncDeviceInfo for Dummy {
     }
 }
 
-impl DynDeviceBackend for Dummy {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
+crate::impl_dyn_device_backend!(
+    Dummy => [rx, tx, antenna, agc, gain, frequency, sample_rate, bandwidth]
+);
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
-        Some(self)
-    }
-
-    fn tx_device(&self) -> Option<&dyn crate::dev::DynTxDevice> {
-        Some(self)
-    }
-
-    fn antenna_control(&self) -> Option<&dyn AntennaControl> {
-        Some(self)
-    }
-
-    fn agc_control(&self) -> Option<&dyn AgcControl> {
-        Some(self)
-    }
-
-    fn gain_control(&self) -> Option<&dyn GainControl> {
-        Some(self)
-    }
-
-    fn frequency_control(&self) -> Option<&dyn FrequencyControl> {
-        Some(self)
-    }
-
-    fn sample_rate_control(&self) -> Option<&dyn SampleRateControl> {
-        Some(self)
-    }
-
-    fn bandwidth_control(&self) -> Option<&dyn BandwidthControl> {
-        Some(self)
-    }
-}
-
-impl DynAsyncDeviceBackend for Dummy {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn async_rx_device(&self) -> Option<&dyn crate::dev::DynAsyncRxDevice> {
-        Some(self)
-    }
-
-    fn async_tx_device(&self) -> Option<&dyn crate::dev::DynAsyncTxDevice> {
-        Some(self)
-    }
-
-    fn async_antenna_control(&self) -> Option<&dyn crate::dev::DynAsyncAntennaControl> {
-        Some(self)
-    }
-
-    fn async_agc_control(&self) -> Option<&dyn crate::dev::DynAsyncAgcControl> {
-        Some(self)
-    }
-
-    fn async_gain_control(&self) -> Option<&dyn crate::dev::DynAsyncGainControl> {
-        Some(self)
-    }
-
-    fn async_frequency_control(&self) -> Option<&dyn crate::dev::DynAsyncFrequencyControl> {
-        Some(self)
-    }
-
-    fn async_sample_rate_control(&self) -> Option<&dyn crate::dev::DynAsyncSampleRateControl> {
-        Some(self)
-    }
-
-    fn async_bandwidth_control(&self) -> Option<&dyn crate::dev::DynAsyncBandwidthControl> {
-        Some(self)
-    }
-}
+crate::impl_dyn_async_device_backend!(
+    Dummy => [rx, tx, antenna, agc, gain, frequency, sample_rate, bandwidth]
+);
 
 impl RxDevice for Dummy {
     type RxStreamer = RxStreamer;

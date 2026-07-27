@@ -2866,19 +2866,7 @@ mod wasm_non_send_compile_check {
         }
     }
 
-    impl DynAsyncDeviceBackend for LocalOnly {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
-        fn as_any_mut(&mut self) -> &mut dyn Any {
-            self
-        }
-
-        fn async_rx_device(&self) -> Option<&dyn DynAsyncRxDevice> {
-            Some(self)
-        }
-    }
+    crate::impl_dyn_async_device_backend!(LocalOnly => [rx]);
 
     impl AsyncRxDevice for LocalOnly {
         type RxStreamer = LocalRxStreamer;

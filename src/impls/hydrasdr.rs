@@ -1,6 +1,5 @@
 //! HydraSDR RFOne driver.
 
-use std::any::Any;
 #[cfg(any(feature = "smol", feature = "tokio"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -20,14 +19,13 @@ use crate::Direction::*;
 #[cfg(any(feature = "smol", feature = "tokio"))]
 use crate::{
     async_compat::{timeout_from_micros, with_timeout, TimeoutResult},
-    dev::{AsyncTypedDeviceBackend, DynAsyncDeviceBackend},
+    dev::AsyncTypedDeviceBackend,
     AsyncAgcControl, AsyncAntennaControl, AsyncBandwidthControl, AsyncDeviceInfo,
     AsyncFrequencyControl, AsyncGainControl, AsyncRxDevice, AsyncSampleRateControl,
 };
 use crate::{
-    dev::DynDeviceBackend, AgcControl, AntennaControl, Args, BandwidthControl, Capability,
-    DeviceInfo, Direction, Driver, Error, FrequencyControl, GainControl, Range, RangeItem,
-    RxDevice, SampleRateControl,
+    AgcControl, AntennaControl, Args, BandwidthControl, Capability, DeviceInfo, Direction, Driver,
+    Error, FrequencyControl, GainControl, Range, RangeItem, RxDevice, SampleRateControl,
 };
 
 const MTU: usize = 262_144 / 8;
@@ -1164,43 +1162,9 @@ impl DeviceInfo for HydraSdr {
     }
 }
 
-impl DynDeviceBackend for HydraSdr {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
-        Some(self)
-    }
-
-    fn antenna_control(&self) -> Option<&dyn AntennaControl> {
-        Some(self)
-    }
-
-    fn agc_control(&self) -> Option<&dyn AgcControl> {
-        Some(self)
-    }
-
-    fn gain_control(&self) -> Option<&dyn GainControl> {
-        Some(self)
-    }
-
-    fn frequency_control(&self) -> Option<&dyn FrequencyControl> {
-        Some(self)
-    }
-
-    fn sample_rate_control(&self) -> Option<&dyn SampleRateControl> {
-        Some(self)
-    }
-
-    fn bandwidth_control(&self) -> Option<&dyn BandwidthControl> {
-        Some(self)
-    }
-}
+crate::impl_dyn_device_backend!(
+    HydraSdr => [rx, antenna, agc, gain, frequency, sample_rate, bandwidth]
+);
 
 impl RxDevice for HydraSdr {
     type RxStreamer = RxStreamer;
@@ -1412,43 +1376,9 @@ impl AsyncDeviceInfo for AsyncHydraSdr {
 }
 
 #[cfg(any(feature = "smol", feature = "tokio"))]
-impl DynAsyncDeviceBackend for AsyncHydraSdr {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn async_rx_device(&self) -> Option<&dyn crate::dev::DynAsyncRxDevice> {
-        Some(self)
-    }
-
-    fn async_antenna_control(&self) -> Option<&dyn crate::dev::DynAsyncAntennaControl> {
-        Some(self)
-    }
-
-    fn async_agc_control(&self) -> Option<&dyn crate::dev::DynAsyncAgcControl> {
-        Some(self)
-    }
-
-    fn async_gain_control(&self) -> Option<&dyn crate::dev::DynAsyncGainControl> {
-        Some(self)
-    }
-
-    fn async_frequency_control(&self) -> Option<&dyn crate::dev::DynAsyncFrequencyControl> {
-        Some(self)
-    }
-
-    fn async_sample_rate_control(&self) -> Option<&dyn crate::dev::DynAsyncSampleRateControl> {
-        Some(self)
-    }
-
-    fn async_bandwidth_control(&self) -> Option<&dyn crate::dev::DynAsyncBandwidthControl> {
-        Some(self)
-    }
-}
+crate::impl_dyn_async_device_backend!(
+    AsyncHydraSdr => [rx, antenna, agc, gain, frequency, sample_rate, bandwidth]
+);
 
 #[cfg(any(feature = "smol", feature = "tokio"))]
 impl AsyncRxDevice for AsyncHydraSdr {

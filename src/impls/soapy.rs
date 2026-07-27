@@ -2,7 +2,6 @@
 use num_complex::Complex32;
 use std::sync::OnceLock;
 
-use crate::dev::DynDeviceBackend;
 use crate::AgcControl;
 use crate::AntennaControl;
 use crate::Args;
@@ -129,51 +128,19 @@ impl DeviceInfo for Soapy {
     }
 }
 
-impl DynDeviceBackend for Soapy {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
-        Some(self)
-    }
-
-    fn tx_device(&self) -> Option<&dyn crate::dev::DynTxDevice> {
-        Some(self)
-    }
-
-    fn antenna_control(&self) -> Option<&dyn AntennaControl> {
-        Some(self)
-    }
-
-    fn agc_control(&self) -> Option<&dyn AgcControl> {
-        Some(self)
-    }
-
-    fn gain_control(&self) -> Option<&dyn GainControl> {
-        Some(self)
-    }
-
-    fn frequency_control(&self) -> Option<&dyn FrequencyControl> {
-        Some(self)
-    }
-
-    fn sample_rate_control(&self) -> Option<&dyn SampleRateControl> {
-        Some(self)
-    }
-
-    fn bandwidth_control(&self) -> Option<&dyn BandwidthControl> {
-        Some(self)
-    }
-
-    fn dc_offset_control(&self) -> Option<&dyn DcOffsetControl> {
-        Some(self)
-    }
-}
+crate::impl_dyn_device_backend!(
+    Soapy => [
+        rx,
+        tx,
+        antenna,
+        agc,
+        gain,
+        frequency,
+        sample_rate,
+        bandwidth,
+        dc_offset
+    ]
+);
 
 impl RxDevice for Soapy {
     type RxStreamer = RxStreamer;

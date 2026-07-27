@@ -4,8 +4,8 @@ use num_complex::Complex32;
 use seify_hackrfone::Config;
 
 use crate::{
-    dev::DynDeviceBackend, AntennaControl, Args, BandwidthControl, Capability, DeviceInfo,
-    Direction, Error, FrequencyControl, GainControl, Range, RangeItem, RxDevice, SampleRateControl,
+    AntennaControl, Args, BandwidthControl, Capability, DeviceInfo, Direction, Error,
+    FrequencyControl, GainControl, Range, RangeItem, RxDevice, SampleRateControl,
 };
 
 /// HackRF One device backend.
@@ -462,39 +462,9 @@ impl DeviceInfo for HackRfOne {
     }
 }
 
-impl DynDeviceBackend for HackRfOne {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
-        Some(self)
-    }
-
-    fn antenna_control(&self) -> Option<&dyn AntennaControl> {
-        Some(self)
-    }
-
-    fn gain_control(&self) -> Option<&dyn GainControl> {
-        Some(self)
-    }
-
-    fn frequency_control(&self) -> Option<&dyn FrequencyControl> {
-        Some(self)
-    }
-
-    fn sample_rate_control(&self) -> Option<&dyn SampleRateControl> {
-        Some(self)
-    }
-
-    fn bandwidth_control(&self) -> Option<&dyn BandwidthControl> {
-        Some(self)
-    }
-}
+crate::impl_dyn_device_backend!(
+    HackRfOne => [rx, antenna, gain, frequency, sample_rate, bandwidth]
+);
 
 impl RxDevice for HackRfOne {
     type RxStreamer = RxStreamer;

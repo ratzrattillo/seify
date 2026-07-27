@@ -1835,19 +1835,7 @@ mod tests {
         }
     }
 
-    impl DynDeviceBackend for RxOnly {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
-        fn as_any_mut(&mut self) -> &mut dyn Any {
-            self
-        }
-
-        fn rx_device(&self) -> Option<&dyn DynRxDevice> {
-            Some(self)
-        }
-    }
+    crate::impl_dyn_device_backend!(RxOnly => [rx]);
 
     impl RxDevice for RxOnly {
         type RxStreamer = TestRxStreamer;

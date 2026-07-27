@@ -1,7 +1,7 @@
 use crate::{
-    dev::DynDeviceBackend, AgcControl, AntennaControl, Args, BandwidthControl, Capability,
-    DeviceInfo, Direction, DriverError, Error, FrequencyControl, GainControl, Range, RangeItem,
-    RxDevice, SampleRateControl, TxDevice,
+    AgcControl, AntennaControl, Args, BandwidthControl, Capability, DeviceInfo, Direction,
+    DriverError, Error, FrequencyControl, GainControl, Range, RangeItem, RxDevice,
+    SampleRateControl, TxDevice,
 };
 use libbladerf_rs::bladerf1::hardware::lms6002d::dc_calibration::DcCalModule;
 use libbladerf_rs::bladerf1::hardware::lms6002d::gain::GainStage;
@@ -767,47 +767,9 @@ impl DeviceInfo for BladeRf {
     }
 }
 
-impl DynDeviceBackend for BladeRf {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn rx_device(&self) -> Option<&dyn crate::dev::DynRxDevice> {
-        Some(self)
-    }
-
-    fn tx_device(&self) -> Option<&dyn crate::dev::DynTxDevice> {
-        Some(self)
-    }
-
-    fn antenna_control(&self) -> Option<&dyn AntennaControl> {
-        Some(self)
-    }
-
-    fn agc_control(&self) -> Option<&dyn AgcControl> {
-        Some(self)
-    }
-
-    fn gain_control(&self) -> Option<&dyn GainControl> {
-        Some(self)
-    }
-
-    fn frequency_control(&self) -> Option<&dyn FrequencyControl> {
-        Some(self)
-    }
-
-    fn sample_rate_control(&self) -> Option<&dyn SampleRateControl> {
-        Some(self)
-    }
-
-    fn bandwidth_control(&self) -> Option<&dyn BandwidthControl> {
-        Some(self)
-    }
-}
+crate::impl_dyn_device_backend!(
+    BladeRf => [rx, tx, antenna, agc, gain, frequency, sample_rate, bandwidth]
+);
 
 impl RxDevice for BladeRf {
     type RxStreamer = RxStreamer;
