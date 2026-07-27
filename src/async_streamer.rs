@@ -49,51 +49,51 @@ pub trait AsyncRxStreamer: MaybeSend {
 }
 
 /// Object-safe asynchronous receive streamer.
-pub trait ErasedAsyncRxStreamer: MaybeSend {
+pub trait DynAsyncRxStreamerBackend: MaybeSend {
     /// Get the stream's maximum transmission unit in number of elements.
-    fn erased_mtu(&self) -> BoxedFuture<'_, Result<usize, Error>>;
+    fn dyn_mtu(&self) -> BoxedFuture<'_, Result<usize, Error>>;
 
     /// Activate a stream immediately.
-    fn erased_activate(&mut self) -> BoxedFuture<'_, Result<(), Error>> {
-        self.erased_activate_at(None)
+    fn dyn_activate(&mut self) -> BoxedFuture<'_, Result<(), Error>> {
+        self.dyn_activate_at(None)
     }
 
     /// Activate a stream at an optional device-relative timestamp.
-    fn erased_activate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>>;
+    fn dyn_activate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>>;
 
     /// Deactivate a stream immediately.
-    fn erased_deactivate(&mut self) -> BoxedFuture<'_, Result<(), Error>> {
-        self.erased_deactivate_at(None)
+    fn dyn_deactivate(&mut self) -> BoxedFuture<'_, Result<(), Error>> {
+        self.dyn_deactivate_at(None)
     }
 
     /// Deactivate a stream at an optional device-relative timestamp.
-    fn erased_deactivate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>>;
+    fn dyn_deactivate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>>;
 
     /// Read samples from the stream into the provided channel buffers.
-    fn erased_read<'a>(
+    fn dyn_read<'a>(
         &'a mut self,
         buffers: &'a mut [&'a mut [Complex32]],
         timeout_us: i64,
     ) -> BoxedFuture<'a, Result<usize, Error>>;
 }
 
-impl<T> ErasedAsyncRxStreamer for T
+impl<T> DynAsyncRxStreamerBackend for T
 where
     T: AsyncRxStreamer,
 {
-    fn erased_mtu(&self) -> BoxedFuture<'_, Result<usize, Error>> {
+    fn dyn_mtu(&self) -> BoxedFuture<'_, Result<usize, Error>> {
         AsyncRxStreamer::mtu(self).boxed_async()
     }
 
-    fn erased_activate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>> {
+    fn dyn_activate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>> {
         AsyncRxStreamer::activate_at(self, time_ns).boxed_async()
     }
 
-    fn erased_deactivate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>> {
+    fn dyn_deactivate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>> {
         AsyncRxStreamer::deactivate_at(self, time_ns).boxed_async()
     }
 
-    fn erased_read<'a>(
+    fn dyn_read<'a>(
         &'a mut self,
         buffers: &'a mut [&'a mut [Complex32]],
         timeout_us: i64,
@@ -103,23 +103,23 @@ where
 }
 
 #[doc(hidden)]
-impl AsyncRxStreamer for Box<dyn ErasedAsyncRxStreamer> {
+impl AsyncRxStreamer for Box<dyn DynAsyncRxStreamerBackend> {
     fn mtu(&self) -> impl Future<Output = Result<usize, Error>> + MaybeSend + '_ {
-        self.as_ref().erased_mtu()
+        self.as_ref().dyn_mtu()
     }
 
     fn activate_at(
         &mut self,
         time_ns: Option<i64>,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + '_ {
-        self.as_mut().erased_activate_at(time_ns)
+        self.as_mut().dyn_activate_at(time_ns)
     }
 
     fn deactivate_at(
         &mut self,
         time_ns: Option<i64>,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + '_ {
-        self.as_mut().erased_deactivate_at(time_ns)
+        self.as_mut().dyn_deactivate_at(time_ns)
     }
 
     fn read<'a>(
@@ -127,7 +127,7 @@ impl AsyncRxStreamer for Box<dyn ErasedAsyncRxStreamer> {
         buffers: &'a mut [&'a mut [Complex32]],
         timeout_us: i64,
     ) -> impl Future<Output = Result<usize, Error>> + MaybeSend + 'a {
-        self.as_mut().erased_read(buffers, timeout_us)
+        self.as_mut().dyn_read(buffers, timeout_us)
     }
 }
 
@@ -199,28 +199,28 @@ pub trait AsyncTxStreamer: MaybeSend {
 }
 
 /// Object-safe asynchronous transmit streamer.
-pub trait ErasedAsyncTxStreamer: MaybeSend {
+pub trait DynAsyncTxStreamerBackend: MaybeSend {
     /// Get the stream's maximum transmission unit in number of elements.
-    fn erased_mtu(&self) -> BoxedFuture<'_, Result<usize, Error>>;
+    fn dyn_mtu(&self) -> BoxedFuture<'_, Result<usize, Error>>;
 
     /// Activate a stream immediately.
-    fn erased_activate(&mut self) -> BoxedFuture<'_, Result<(), Error>> {
-        self.erased_activate_at(None)
+    fn dyn_activate(&mut self) -> BoxedFuture<'_, Result<(), Error>> {
+        self.dyn_activate_at(None)
     }
 
     /// Activate a stream at an optional device-relative timestamp.
-    fn erased_activate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>>;
+    fn dyn_activate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>>;
 
     /// Deactivate a stream immediately.
-    fn erased_deactivate(&mut self) -> BoxedFuture<'_, Result<(), Error>> {
-        self.erased_deactivate_at(None)
+    fn dyn_deactivate(&mut self) -> BoxedFuture<'_, Result<(), Error>> {
+        self.dyn_deactivate_at(None)
     }
 
     /// Deactivate a stream at an optional device-relative timestamp.
-    fn erased_deactivate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>>;
+    fn dyn_deactivate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>>;
 
     /// Attempt to write samples to the device from the provided buffers.
-    fn erased_write<'a>(
+    fn dyn_write<'a>(
         &'a mut self,
         buffers: &'a [&'a [Complex32]],
         at_ns: Option<i64>,
@@ -229,7 +229,7 @@ pub trait ErasedAsyncTxStreamer: MaybeSend {
     ) -> BoxedFuture<'a, Result<usize, Error>>;
 
     /// Write all samples to the device.
-    fn erased_write_all<'a>(
+    fn dyn_write_all<'a>(
         &'a mut self,
         buffers: &'a [&'a [Complex32]],
         at_ns: Option<i64>,
@@ -244,7 +244,7 @@ pub trait ErasedAsyncTxStreamer: MaybeSend {
                 let remaining: Vec<&[Complex32]> =
                     buffers.iter().map(|buffer| &buffer[written..]).collect();
                 let n = self
-                    .erased_write(&remaining, at_ns, end_burst, timeout_us)
+                    .dyn_write(&remaining, at_ns, end_burst, timeout_us)
                     .await?;
                 if n == 0 {
                     return Err(Error::Timeout);
@@ -258,23 +258,23 @@ pub trait ErasedAsyncTxStreamer: MaybeSend {
     }
 }
 
-impl<T> ErasedAsyncTxStreamer for T
+impl<T> DynAsyncTxStreamerBackend for T
 where
     T: AsyncTxStreamer,
 {
-    fn erased_mtu(&self) -> BoxedFuture<'_, Result<usize, Error>> {
+    fn dyn_mtu(&self) -> BoxedFuture<'_, Result<usize, Error>> {
         AsyncTxStreamer::mtu(self).boxed_async()
     }
 
-    fn erased_activate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>> {
+    fn dyn_activate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>> {
         AsyncTxStreamer::activate_at(self, time_ns).boxed_async()
     }
 
-    fn erased_deactivate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>> {
+    fn dyn_deactivate_at(&mut self, time_ns: Option<i64>) -> BoxedFuture<'_, Result<(), Error>> {
         AsyncTxStreamer::deactivate_at(self, time_ns).boxed_async()
     }
 
-    fn erased_write<'a>(
+    fn dyn_write<'a>(
         &'a mut self,
         buffers: &'a [&'a [Complex32]],
         at_ns: Option<i64>,
@@ -284,7 +284,7 @@ where
         AsyncTxStreamer::write(self, buffers, at_ns, end_burst, timeout_us).boxed_async()
     }
 
-    fn erased_write_all<'a>(
+    fn dyn_write_all<'a>(
         &'a mut self,
         buffers: &'a [&'a [Complex32]],
         at_ns: Option<i64>,
@@ -296,23 +296,23 @@ where
 }
 
 #[doc(hidden)]
-impl AsyncTxStreamer for Box<dyn ErasedAsyncTxStreamer> {
+impl AsyncTxStreamer for Box<dyn DynAsyncTxStreamerBackend> {
     fn mtu(&self) -> impl Future<Output = Result<usize, Error>> + MaybeSend + '_ {
-        self.as_ref().erased_mtu()
+        self.as_ref().dyn_mtu()
     }
 
     fn activate_at(
         &mut self,
         time_ns: Option<i64>,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + '_ {
-        self.as_mut().erased_activate_at(time_ns)
+        self.as_mut().dyn_activate_at(time_ns)
     }
 
     fn deactivate_at(
         &mut self,
         time_ns: Option<i64>,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + '_ {
-        self.as_mut().erased_deactivate_at(time_ns)
+        self.as_mut().dyn_deactivate_at(time_ns)
     }
 
     fn write<'a>(
@@ -323,7 +323,7 @@ impl AsyncTxStreamer for Box<dyn ErasedAsyncTxStreamer> {
         timeout_us: i64,
     ) -> impl Future<Output = Result<usize, Error>> + MaybeSend + 'a {
         self.as_mut()
-            .erased_write(buffers, at_ns, end_burst, timeout_us)
+            .dyn_write(buffers, at_ns, end_burst, timeout_us)
     }
 
     fn write_all<'a>(
@@ -334,6 +334,6 @@ impl AsyncTxStreamer for Box<dyn ErasedAsyncTxStreamer> {
         timeout_us: i64,
     ) -> impl Future<Output = Result<(), Error>> + MaybeSend + 'a {
         self.as_mut()
-            .erased_write_all(buffers, at_ns, end_burst, timeout_us)
+            .dyn_write_all(buffers, at_ns, end_burst, timeout_us)
     }
 }

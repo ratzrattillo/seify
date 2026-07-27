@@ -2,11 +2,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::dev::{
-    AsyncDynDeviceBackend, AsyncTypedDeviceBackend, DynDeviceBackend, ErasedAsyncAgcControl,
-    ErasedAsyncAntennaControl, ErasedAsyncBandwidthControl, ErasedAsyncFrequencyControl,
-    ErasedAsyncGainControl, ErasedAsyncRxDevice, ErasedAsyncSampleRateControl, ErasedAsyncTxDevice,
-};
+use crate::dev::{AsyncDynDeviceBackend, AsyncTypedDeviceBackend, DynDeviceBackend};
 use crate::AgcControl;
 use crate::AntennaControl;
 use crate::Args;
@@ -183,35 +179,35 @@ impl DynDeviceBackend for Dummy {
 }
 
 impl AsyncDynDeviceBackend for Dummy {
-    fn async_rx_device(&self) -> Option<&dyn ErasedAsyncRxDevice> {
+    fn async_rx_device(&self) -> Option<&dyn crate::dev::DynAsyncRxDevice> {
         Some(self)
     }
 
-    fn async_tx_device(&self) -> Option<&dyn ErasedAsyncTxDevice> {
+    fn async_tx_device(&self) -> Option<&dyn crate::dev::DynAsyncTxDevice> {
         Some(self)
     }
 
-    fn async_antenna_control(&self) -> Option<&dyn ErasedAsyncAntennaControl> {
+    fn async_antenna_control(&self) -> Option<&dyn crate::dev::DynAsyncAntennaControl> {
         Some(self)
     }
 
-    fn async_agc_control(&self) -> Option<&dyn ErasedAsyncAgcControl> {
+    fn async_agc_control(&self) -> Option<&dyn crate::dev::DynAsyncAgcControl> {
         Some(self)
     }
 
-    fn async_gain_control(&self) -> Option<&dyn ErasedAsyncGainControl> {
+    fn async_gain_control(&self) -> Option<&dyn crate::dev::DynAsyncGainControl> {
         Some(self)
     }
 
-    fn async_frequency_control(&self) -> Option<&dyn ErasedAsyncFrequencyControl> {
+    fn async_frequency_control(&self) -> Option<&dyn crate::dev::DynAsyncFrequencyControl> {
         Some(self)
     }
 
-    fn async_sample_rate_control(&self) -> Option<&dyn ErasedAsyncSampleRateControl> {
+    fn async_sample_rate_control(&self) -> Option<&dyn crate::dev::DynAsyncSampleRateControl> {
         Some(self)
     }
 
-    fn async_bandwidth_control(&self) -> Option<&dyn ErasedAsyncBandwidthControl> {
+    fn async_bandwidth_control(&self) -> Option<&dyn crate::dev::DynAsyncBandwidthControl> {
         Some(self)
     }
 }

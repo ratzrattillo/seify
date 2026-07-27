@@ -3,7 +3,7 @@ use std::future::Future;
 
 use crate::async_compat::Shared;
 use crate::async_streamer::{
-    AsyncRxStreamer, AsyncTxStreamer, ErasedAsyncRxStreamer, ErasedAsyncTxStreamer,
+    AsyncRxStreamer, AsyncTxStreamer, DynAsyncRxStreamerBackend, DynAsyncTxStreamerBackend,
 };
 use crate::Args;
 use crate::AsyncFutureExt;
@@ -21,10 +21,10 @@ use crate::MaybeSync;
 use crate::Range;
 
 /// Type-erased asynchronous RX streamer.
-pub type DynAsyncRxStreamer = Box<dyn ErasedAsyncRxStreamer>;
+pub type DynAsyncRxStreamer = Box<dyn DynAsyncRxStreamerBackend>;
 
 /// Type-erased asynchronous TX streamer.
-pub type DynAsyncTxStreamer = Box<dyn ErasedAsyncTxStreamer>;
+pub type DynAsyncTxStreamer = Box<dyn DynAsyncTxStreamerBackend>;
 
 /// Basic asynchronous device metadata.
 ///
@@ -296,78 +296,72 @@ pub trait AsyncDcOffsetControl: MaybeSend + MaybeSync {
 }
 
 /// Object-safe asynchronous device metadata.
-pub trait ErasedAsyncDeviceInfo: MaybeSend + MaybeSync {
+pub trait DynAsyncDeviceInfo: MaybeSend + MaybeSync {
     /// Cast to [`Any`] for downcasting.
-    fn erased_as_any(&self) -> &dyn Any;
+    fn dyn_as_any(&self) -> &dyn Any;
     /// Cast to [`Any`] for mutable downcasting.
-    fn erased_as_any_mut(&mut self) -> &mut dyn Any;
+    fn dyn_as_any_mut(&mut self) -> &mut dyn Any;
     /// SDR driver.
-    fn erased_driver(&self) -> Driver;
+    fn dyn_driver(&self) -> Driver;
     /// Identifier for the device, e.g. its serial.
-    fn erased_async_id(&self) -> BoxedFuture<'_, Result<String, Error>>;
+    fn dyn_id(&self) -> BoxedFuture<'_, Result<String, Error>>;
     /// Device info that can be displayed to the user.
-    fn erased_async_info(&self) -> BoxedFuture<'_, Result<Args, Error>>;
+    fn dyn_info(&self) -> BoxedFuture<'_, Result<Args, Error>>;
     /// Number of supported channels.
-    fn erased_async_num_channels(
-        &self,
-        direction: Direction,
-    ) -> BoxedFuture<'_, Result<usize, Error>>;
+    fn dyn_num_channels(&self, direction: Direction) -> BoxedFuture<'_, Result<usize, Error>>;
     /// Whether this device supports simultaneous reception and transmission.
-    fn erased_async_full_duplex(&self) -> BoxedFuture<'_, Result<bool, Error>>;
+    fn dyn_full_duplex(&self) -> BoxedFuture<'_, Result<bool, Error>>;
 }
 
-impl<T> ErasedAsyncDeviceInfo for T
+impl<T> DynAsyncDeviceInfo for T
 where
     T: AsyncDeviceInfo,
 {
-    fn erased_as_any(&self) -> &dyn Any {
+    fn dyn_as_any(&self) -> &dyn Any {
         AsyncDeviceInfo::as_any(self)
     }
 
-    fn erased_as_any_mut(&mut self) -> &mut dyn Any {
+    fn dyn_as_any_mut(&mut self) -> &mut dyn Any {
         AsyncDeviceInfo::as_any_mut(self)
     }
 
-    fn erased_driver(&self) -> Driver {
+    fn dyn_driver(&self) -> Driver {
         AsyncDeviceInfo::driver(self)
     }
 
-    fn erased_async_id(&self) -> BoxedFuture<'_, Result<String, Error>> {
+    fn dyn_id(&self) -> BoxedFuture<'_, Result<String, Error>> {
         AsyncDeviceInfo::async_id(self).boxed_async()
     }
 
-    fn erased_async_info(&self) -> BoxedFuture<'_, Result<Args, Error>> {
+    fn dyn_info(&self) -> BoxedFuture<'_, Result<Args, Error>> {
         AsyncDeviceInfo::async_info(self).boxed_async()
     }
 
-    fn erased_async_num_channels(
-        &self,
-        direction: Direction,
-    ) -> BoxedFuture<'_, Result<usize, Error>> {
+    fn dyn_num_channels(&self, direction: Direction) -> BoxedFuture<'_, Result<usize, Error>> {
         AsyncDeviceInfo::async_num_channels(self, direction).boxed_async()
     }
 
-    fn erased_async_full_duplex(&self) -> BoxedFuture<'_, Result<bool, Error>> {
+    fn dyn_full_duplex(&self) -> BoxedFuture<'_, Result<bool, Error>> {
         AsyncDeviceInfo::async_full_duplex(self).boxed_async()
     }
 }
 
 /// Object-safe asynchronous RX streaming capability.
-pub trait ErasedAsyncRxDevice: MaybeSend + MaybeSync {
+pub trait DynAsyncRxDevice: MaybeSend + MaybeSync {
     /// Create a type-erased asynchronous RX streamer.
-    fn erased_async_rx_streamer<'a>(
+    fn dyn_rx_streamer<'a>(
         &'a self,
         channels: &'a [usize],
         args: Args,
     ) -> BoxedFuture<'a, Result<DynAsyncRxStreamer, Error>>;
 }
 
-impl<T> ErasedAsyncRxDevice for T
+impl<T> DynAsyncRxDevice for T
 where
     T: AsyncRxDevice,
     T::RxStreamer: 'static,
 {
-    fn erased_async_rx_streamer<'a>(
+    fn dyn_rx_streamer<'a>(
         &'a self,
         channels: &'a [usize],
         args: Args,
@@ -383,21 +377,21 @@ where
 }
 
 /// Object-safe asynchronous TX streaming capability.
-pub trait ErasedAsyncTxDevice: MaybeSend + MaybeSync {
+pub trait DynAsyncTxDevice: MaybeSend + MaybeSync {
     /// Create a type-erased asynchronous TX streamer.
-    fn erased_async_tx_streamer<'a>(
+    fn dyn_tx_streamer<'a>(
         &'a self,
         channels: &'a [usize],
         args: Args,
     ) -> BoxedFuture<'a, Result<DynAsyncTxStreamer, Error>>;
 }
 
-impl<T> ErasedAsyncTxDevice for T
+impl<T> DynAsyncTxDevice for T
 where
     T: AsyncTxDevice,
     T::TxStreamer: 'static,
 {
-    fn erased_async_tx_streamer<'a>(
+    fn dyn_tx_streamer<'a>(
         &'a self,
         channels: &'a [usize],
         args: Args,
@@ -413,21 +407,21 @@ where
 }
 
 /// Object-safe asynchronous antenna control capability.
-pub trait ErasedAsyncAntennaControl: MaybeSend + MaybeSync {
+pub trait DynAsyncAntennaControl: MaybeSend + MaybeSync {
     /// Return available antenna port names.
-    fn erased_async_antennas(
+    fn dyn_antennas(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<Vec<String>, Error>>;
     /// Return the selected antenna port name.
-    fn erased_async_antenna(
+    fn dyn_antenna(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<String, Error>>;
     /// Select an antenna port by name.
-    fn erased_async_set_antenna<'a>(
+    fn dyn_set_antenna<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -435,11 +429,11 @@ pub trait ErasedAsyncAntennaControl: MaybeSend + MaybeSync {
     ) -> BoxedFuture<'a, Result<(), Error>>;
 }
 
-impl<T> ErasedAsyncAntennaControl for T
+impl<T> DynAsyncAntennaControl for T
 where
     T: AsyncAntennaControl,
 {
-    fn erased_async_antennas(
+    fn dyn_antennas(
         &self,
         direction: Direction,
         channel: usize,
@@ -447,7 +441,7 @@ where
         AsyncAntennaControl::async_antennas(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_antenna(
+    fn dyn_antenna(
         &self,
         direction: Direction,
         channel: usize,
@@ -455,7 +449,7 @@ where
         AsyncAntennaControl::async_antenna(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_set_antenna<'a>(
+    fn dyn_set_antenna<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -466,21 +460,21 @@ where
 }
 
 /// Object-safe asynchronous automatic gain control capability.
-pub trait ErasedAsyncAgcControl: MaybeSend + MaybeSync {
+pub trait DynAsyncAgcControl: MaybeSend + MaybeSync {
     /// Return whether automatic gain control is available.
-    fn erased_async_agc_available(
+    fn dyn_agc_available(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<bool, Error>>;
     /// Return whether automatic gain control is enabled.
-    fn erased_async_agc_enabled(
+    fn dyn_agc_enabled(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<bool, Error>>;
     /// Enable or disable automatic gain control.
-    fn erased_async_set_agc_enabled(
+    fn dyn_set_agc_enabled(
         &self,
         direction: Direction,
         channel: usize,
@@ -488,11 +482,11 @@ pub trait ErasedAsyncAgcControl: MaybeSend + MaybeSync {
     ) -> BoxedFuture<'_, Result<(), Error>>;
 }
 
-impl<T> ErasedAsyncAgcControl for T
+impl<T> DynAsyncAgcControl for T
 where
     T: AsyncAgcControl,
 {
-    fn erased_async_agc_available(
+    fn dyn_agc_available(
         &self,
         direction: Direction,
         channel: usize,
@@ -500,7 +494,7 @@ where
         AsyncAgcControl::async_agc_available(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_agc_enabled(
+    fn dyn_agc_enabled(
         &self,
         direction: Direction,
         channel: usize,
@@ -508,7 +502,7 @@ where
         AsyncAgcControl::async_agc_enabled(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_set_agc_enabled(
+    fn dyn_set_agc_enabled(
         &self,
         direction: Direction,
         channel: usize,
@@ -519,34 +513,34 @@ where
 }
 
 /// Object-safe asynchronous gain control capability.
-pub trait ErasedAsyncGainControl: MaybeSend + MaybeSync {
+pub trait DynAsyncGainControl: MaybeSend + MaybeSync {
     /// Return named gain elements available for the channel.
-    fn erased_async_gain_elements(
+    fn dyn_gain_elements(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<Vec<String>, Error>>;
     /// Set overall channel gain in dB.
-    fn erased_async_set_gain(
+    fn dyn_set_gain(
         &self,
         direction: Direction,
         channel: usize,
         gain: f64,
     ) -> BoxedFuture<'_, Result<(), Error>>;
     /// Return overall channel gain in dB, if available.
-    fn erased_async_gain(
+    fn dyn_gain(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<Option<f64>, Error>>;
     /// Return supported overall channel gain range in dB.
-    fn erased_async_gain_range(
+    fn dyn_gain_range(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<Range, Error>>;
     /// Set a named gain element in dB.
-    fn erased_async_set_gain_element<'a>(
+    fn dyn_set_gain_element<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -554,14 +548,14 @@ pub trait ErasedAsyncGainControl: MaybeSend + MaybeSync {
         gain: f64,
     ) -> BoxedFuture<'a, Result<(), Error>>;
     /// Return a named gain element in dB, if available.
-    fn erased_async_gain_element<'a>(
+    fn dyn_gain_element<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
         name: &'a str,
     ) -> BoxedFuture<'a, Result<Option<f64>, Error>>;
     /// Return supported range in dB for a named gain element.
-    fn erased_async_gain_element_range<'a>(
+    fn dyn_gain_element_range<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -569,11 +563,11 @@ pub trait ErasedAsyncGainControl: MaybeSend + MaybeSync {
     ) -> BoxedFuture<'a, Result<Range, Error>>;
 }
 
-impl<T> ErasedAsyncGainControl for T
+impl<T> DynAsyncGainControl for T
 where
     T: AsyncGainControl,
 {
-    fn erased_async_gain_elements(
+    fn dyn_gain_elements(
         &self,
         direction: Direction,
         channel: usize,
@@ -581,7 +575,7 @@ where
         AsyncGainControl::async_gain_elements(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_set_gain(
+    fn dyn_set_gain(
         &self,
         direction: Direction,
         channel: usize,
@@ -590,7 +584,7 @@ where
         AsyncGainControl::async_set_gain(self, direction, channel, gain).boxed_async()
     }
 
-    fn erased_async_gain(
+    fn dyn_gain(
         &self,
         direction: Direction,
         channel: usize,
@@ -598,7 +592,7 @@ where
         AsyncGainControl::async_gain(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_gain_range(
+    fn dyn_gain_range(
         &self,
         direction: Direction,
         channel: usize,
@@ -606,7 +600,7 @@ where
         AsyncGainControl::async_gain_range(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_set_gain_element<'a>(
+    fn dyn_set_gain_element<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -616,7 +610,7 @@ where
         AsyncGainControl::async_set_gain_element(self, direction, channel, name, gain).boxed_async()
     }
 
-    fn erased_async_gain_element<'a>(
+    fn dyn_gain_element<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -625,7 +619,7 @@ where
         AsyncGainControl::async_gain_element(self, direction, channel, name).boxed_async()
     }
 
-    fn erased_async_gain_element_range<'a>(
+    fn dyn_gain_element_range<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -636,21 +630,21 @@ where
 }
 
 /// Object-safe asynchronous frequency control capability.
-pub trait ErasedAsyncFrequencyControl: MaybeSend + MaybeSync {
+pub trait DynAsyncFrequencyControl: MaybeSend + MaybeSync {
     /// Return supported overall tuning range in Hz.
-    fn erased_async_frequency_range(
+    fn dyn_frequency_range(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<Range, Error>>;
     /// Return current overall channel frequency in Hz.
-    fn erased_async_frequency(
+    fn dyn_frequency(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<f64, Error>>;
     /// Set overall channel frequency in Hz with optional driver arguments.
-    fn erased_async_set_frequency(
+    fn dyn_set_frequency(
         &self,
         direction: Direction,
         channel: usize,
@@ -658,27 +652,27 @@ pub trait ErasedAsyncFrequencyControl: MaybeSend + MaybeSync {
         args: Args,
     ) -> BoxedFuture<'_, Result<(), Error>>;
     /// Return named frequency components for the channel.
-    fn erased_async_frequency_components(
+    fn dyn_frequency_components(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<Vec<String>, Error>>;
     /// Return supported range in Hz for a named frequency component.
-    fn erased_async_component_frequency_range<'a>(
+    fn dyn_component_frequency_range<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
         name: &'a str,
     ) -> BoxedFuture<'a, Result<Range, Error>>;
     /// Return current frequency in Hz for a named frequency component.
-    fn erased_async_component_frequency<'a>(
+    fn dyn_component_frequency<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
         name: &'a str,
     ) -> BoxedFuture<'a, Result<f64, Error>>;
     /// Set frequency in Hz for a named frequency component.
-    fn erased_async_set_component_frequency<'a>(
+    fn dyn_set_component_frequency<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -687,11 +681,11 @@ pub trait ErasedAsyncFrequencyControl: MaybeSend + MaybeSync {
     ) -> BoxedFuture<'a, Result<(), Error>>;
 }
 
-impl<T> ErasedAsyncFrequencyControl for T
+impl<T> DynAsyncFrequencyControl for T
 where
     T: AsyncFrequencyControl,
 {
-    fn erased_async_frequency_range(
+    fn dyn_frequency_range(
         &self,
         direction: Direction,
         channel: usize,
@@ -699,7 +693,7 @@ where
         AsyncFrequencyControl::async_frequency_range(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_frequency(
+    fn dyn_frequency(
         &self,
         direction: Direction,
         channel: usize,
@@ -707,7 +701,7 @@ where
         AsyncFrequencyControl::async_frequency(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_set_frequency(
+    fn dyn_set_frequency(
         &self,
         direction: Direction,
         channel: usize,
@@ -718,7 +712,7 @@ where
             .boxed_async()
     }
 
-    fn erased_async_frequency_components(
+    fn dyn_frequency_components(
         &self,
         direction: Direction,
         channel: usize,
@@ -726,7 +720,7 @@ where
         AsyncFrequencyControl::async_frequency_components(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_component_frequency_range<'a>(
+    fn dyn_component_frequency_range<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -736,7 +730,7 @@ where
             .boxed_async()
     }
 
-    fn erased_async_component_frequency<'a>(
+    fn dyn_component_frequency<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -746,7 +740,7 @@ where
             .boxed_async()
     }
 
-    fn erased_async_set_component_frequency<'a>(
+    fn dyn_set_component_frequency<'a>(
         &'a self,
         direction: Direction,
         channel: usize,
@@ -761,33 +755,33 @@ where
 }
 
 /// Object-safe asynchronous sample-rate control capability.
-pub trait ErasedAsyncSampleRateControl: MaybeSend + MaybeSync {
+pub trait DynAsyncSampleRateControl: MaybeSend + MaybeSync {
     /// Return current sample rate in samples per second.
-    fn erased_async_sample_rate(
+    fn dyn_sample_rate(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<f64, Error>>;
     /// Set sample rate in samples per second.
-    fn erased_async_set_sample_rate(
+    fn dyn_set_sample_rate(
         &self,
         direction: Direction,
         channel: usize,
         rate: f64,
     ) -> BoxedFuture<'_, Result<(), Error>>;
     /// Return supported sample-rate range in samples per second.
-    fn erased_async_get_sample_rate_range(
+    fn dyn_get_sample_rate_range(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<Range, Error>>;
 }
 
-impl<T> ErasedAsyncSampleRateControl for T
+impl<T> DynAsyncSampleRateControl for T
 where
     T: AsyncSampleRateControl,
 {
-    fn erased_async_sample_rate(
+    fn dyn_sample_rate(
         &self,
         direction: Direction,
         channel: usize,
@@ -795,7 +789,7 @@ where
         AsyncSampleRateControl::async_sample_rate(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_set_sample_rate(
+    fn dyn_set_sample_rate(
         &self,
         direction: Direction,
         channel: usize,
@@ -804,7 +798,7 @@ where
         AsyncSampleRateControl::async_set_sample_rate(self, direction, channel, rate).boxed_async()
     }
 
-    fn erased_async_get_sample_rate_range(
+    fn dyn_get_sample_rate_range(
         &self,
         direction: Direction,
         channel: usize,
@@ -814,33 +808,33 @@ where
 }
 
 /// Object-safe asynchronous bandwidth control capability.
-pub trait ErasedAsyncBandwidthControl: MaybeSend + MaybeSync {
+pub trait DynAsyncBandwidthControl: MaybeSend + MaybeSync {
     /// Return current channel bandwidth in Hz.
-    fn erased_async_bandwidth(
+    fn dyn_bandwidth(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<f64, Error>>;
     /// Set channel bandwidth in Hz.
-    fn erased_async_set_bandwidth(
+    fn dyn_set_bandwidth(
         &self,
         direction: Direction,
         channel: usize,
         bandwidth: f64,
     ) -> BoxedFuture<'_, Result<(), Error>>;
     /// Return supported channel bandwidth range in Hz.
-    fn erased_async_get_bandwidth_range(
+    fn dyn_get_bandwidth_range(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<Range, Error>>;
 }
 
-impl<T> ErasedAsyncBandwidthControl for T
+impl<T> DynAsyncBandwidthControl for T
 where
     T: AsyncBandwidthControl,
 {
-    fn erased_async_bandwidth(
+    fn dyn_bandwidth(
         &self,
         direction: Direction,
         channel: usize,
@@ -848,7 +842,7 @@ where
         AsyncBandwidthControl::async_bandwidth(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_set_bandwidth(
+    fn dyn_set_bandwidth(
         &self,
         direction: Direction,
         channel: usize,
@@ -858,7 +852,7 @@ where
             .boxed_async()
     }
 
-    fn erased_async_get_bandwidth_range(
+    fn dyn_get_bandwidth_range(
         &self,
         direction: Direction,
         channel: usize,
@@ -868,21 +862,21 @@ where
 }
 
 /// Object-safe asynchronous automatic DC offset correction capability.
-pub trait ErasedAsyncDcOffsetControl: MaybeSend + MaybeSync {
+pub trait DynAsyncDcOffsetControl: MaybeSend + MaybeSync {
     /// Return whether automatic DC offset correction is available.
-    fn erased_async_dc_offset_available(
+    fn dyn_dc_offset_available(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<bool, Error>>;
     /// Return whether automatic DC offset correction is enabled.
-    fn erased_async_dc_offset_enabled(
+    fn dyn_dc_offset_enabled(
         &self,
         direction: Direction,
         channel: usize,
     ) -> BoxedFuture<'_, Result<bool, Error>>;
     /// Enable or disable automatic DC offset correction.
-    fn erased_async_set_dc_offset_enabled(
+    fn dyn_set_dc_offset_enabled(
         &self,
         direction: Direction,
         channel: usize,
@@ -890,11 +884,11 @@ pub trait ErasedAsyncDcOffsetControl: MaybeSend + MaybeSync {
     ) -> BoxedFuture<'_, Result<(), Error>>;
 }
 
-impl<T> ErasedAsyncDcOffsetControl for T
+impl<T> DynAsyncDcOffsetControl for T
 where
     T: AsyncDcOffsetControl,
 {
-    fn erased_async_dc_offset_available(
+    fn dyn_dc_offset_available(
         &self,
         direction: Direction,
         channel: usize,
@@ -902,7 +896,7 @@ where
         AsyncDcOffsetControl::async_dc_offset_available(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_dc_offset_enabled(
+    fn dyn_dc_offset_enabled(
         &self,
         direction: Direction,
         channel: usize,
@@ -910,7 +904,7 @@ where
         AsyncDcOffsetControl::async_dc_offset_enabled(self, direction, channel).boxed_async()
     }
 
-    fn erased_async_set_dc_offset_enabled(
+    fn dyn_set_dc_offset_enabled(
         &self,
         direction: Direction,
         channel: usize,
@@ -924,57 +918,57 @@ where
 /// Runtime-dispatched asynchronous device backend.
 ///
 /// Backend authors usually implement the typed `Async*` capability traits and
-/// return `Some(self)` from the accessors below. The `ErasedAsync*` traits are
+/// return `Some(self)` from the accessors below. The `DynAsync*` traits are
 /// blanket adapter traits for runtime dispatch and normally do not need manual
 /// implementations.
-pub trait AsyncDynDeviceBackend: ErasedAsyncDeviceInfo + MaybeSend + MaybeSync {
+pub trait AsyncDynDeviceBackend: DynAsyncDeviceInfo + MaybeSend + MaybeSync {
     /// Return a structured snapshot of the device's runtime capabilities.
     fn async_capabilities(&self) -> BoxedFuture<'_, Result<DeviceCapabilities, Error>> {
         async { async_device_capabilities(self).await }.boxed_async()
     }
 
     /// Return RX streaming capability, if exposed.
-    fn async_rx_device(&self) -> Option<&dyn ErasedAsyncRxDevice> {
+    fn async_rx_device(&self) -> Option<&dyn DynAsyncRxDevice> {
         None
     }
 
     /// Return TX streaming capability, if exposed.
-    fn async_tx_device(&self) -> Option<&dyn ErasedAsyncTxDevice> {
+    fn async_tx_device(&self) -> Option<&dyn DynAsyncTxDevice> {
         None
     }
 
     /// Return antenna control capability, if exposed.
-    fn async_antenna_control(&self) -> Option<&dyn ErasedAsyncAntennaControl> {
+    fn async_antenna_control(&self) -> Option<&dyn DynAsyncAntennaControl> {
         None
     }
 
     /// Return automatic gain control capability, if exposed.
-    fn async_agc_control(&self) -> Option<&dyn ErasedAsyncAgcControl> {
+    fn async_agc_control(&self) -> Option<&dyn DynAsyncAgcControl> {
         None
     }
 
     /// Return gain control capability, if exposed.
-    fn async_gain_control(&self) -> Option<&dyn ErasedAsyncGainControl> {
+    fn async_gain_control(&self) -> Option<&dyn DynAsyncGainControl> {
         None
     }
 
     /// Return frequency control capability, if exposed.
-    fn async_frequency_control(&self) -> Option<&dyn ErasedAsyncFrequencyControl> {
+    fn async_frequency_control(&self) -> Option<&dyn DynAsyncFrequencyControl> {
         None
     }
 
     /// Return sample-rate control capability, if exposed.
-    fn async_sample_rate_control(&self) -> Option<&dyn ErasedAsyncSampleRateControl> {
+    fn async_sample_rate_control(&self) -> Option<&dyn DynAsyncSampleRateControl> {
         None
     }
 
     /// Return bandwidth control capability, if exposed.
-    fn async_bandwidth_control(&self) -> Option<&dyn ErasedAsyncBandwidthControl> {
+    fn async_bandwidth_control(&self) -> Option<&dyn DynAsyncBandwidthControl> {
         None
     }
 
     /// Return DC offset control capability, if exposed.
-    fn async_dc_offset_control(&self) -> Option<&dyn ErasedAsyncDcOffsetControl> {
+    fn async_dc_offset_control(&self) -> Option<&dyn DynAsyncDcOffsetControl> {
         None
     }
 }
@@ -990,7 +984,7 @@ where
     D: AsyncDynDeviceBackend + ?Sized,
 {
     Ok(DeviceCapabilities {
-        full_duplex: optional_capability(dev.erased_async_full_duplex().await)?,
+        full_duplex: optional_capability(dev.dyn_full_duplex().await)?,
         rx_channels: async_channel_capabilities(dev, Direction::Rx).await?,
         tx_channels: async_channel_capabilities(dev, Direction::Tx).await?,
     })
@@ -1003,7 +997,7 @@ async fn async_channel_capabilities<D>(
 where
     D: AsyncDynDeviceBackend + ?Sized,
 {
-    let channels = dev.erased_async_num_channels(direction).await?;
+    let channels = dev.dyn_num_channels(direction).await?;
 
     let mut out = Vec::with_capacity(channels);
     for channel in 0..channels {
@@ -1011,41 +1005,41 @@ where
             channel,
             controls: ChannelControls {
                 antennas: optional_capability_async(dev.async_antenna_control(), |cap| {
-                    cap.erased_async_antennas(direction, channel)
+                    cap.dyn_antennas(direction, channel)
                 })
                 .await?,
                 agc: capability_available_async(dev.async_agc_control(), |cap| {
-                    cap.erased_async_agc_available(direction, channel)
+                    cap.dyn_agc_available(direction, channel)
                 })
                 .await?,
                 gain_elements: optional_capability_async(dev.async_gain_control(), |cap| {
-                    cap.erased_async_gain_elements(direction, channel)
+                    cap.dyn_gain_elements(direction, channel)
                 })
                 .await?,
                 gain_range: optional_capability_async(dev.async_gain_control(), |cap| {
-                    cap.erased_async_gain_range(direction, channel)
+                    cap.dyn_gain_range(direction, channel)
                 })
                 .await?,
                 frequency_components: optional_capability_async(
                     dev.async_frequency_control(),
-                    |cap| cap.erased_async_frequency_components(direction, channel),
+                    |cap| cap.dyn_frequency_components(direction, channel),
                 )
                 .await?,
                 frequency_range: optional_capability_async(dev.async_frequency_control(), |cap| {
-                    cap.erased_async_frequency_range(direction, channel)
+                    cap.dyn_frequency_range(direction, channel)
                 })
                 .await?,
                 sample_rate_range: optional_capability_async(
                     dev.async_sample_rate_control(),
-                    |cap| cap.erased_async_get_sample_rate_range(direction, channel),
+                    |cap| cap.dyn_get_sample_rate_range(direction, channel),
                 )
                 .await?,
                 bandwidth_range: optional_capability_async(dev.async_bandwidth_control(), |cap| {
-                    cap.erased_async_get_bandwidth_range(direction, channel)
+                    cap.dyn_get_bandwidth_range(direction, channel)
                 })
                 .await?,
                 dc_offset: capability_available_async(dev.async_dc_offset_control(), |cap| {
-                    cap.erased_async_dc_offset_available(direction, channel)
+                    cap.dyn_dc_offset_available(direction, channel)
                 })
                 .await?,
             },
@@ -1647,36 +1641,36 @@ impl AsyncDynDevice {
         }
     }
 
-    /// Borrow the erased backend.
+    /// Borrow the dynamic backend.
     pub fn as_backend(&self) -> &dyn AsyncDynDeviceBackend {
         self.inner.as_ref()
     }
 
     /// Try to downcast to a concrete device implementation.
     pub fn downcast_ref<D: AsyncDeviceInfo + 'static>(&self) -> Option<&D> {
-        self.inner.erased_as_any().downcast_ref::<D>()
+        self.inner.dyn_as_any().downcast_ref::<D>()
     }
 
     /// Try to downcast mutably to a concrete device implementation.
     pub fn downcast_mut<D: AsyncDeviceInfo + 'static>(&mut self) -> Option<&mut D> {
         Shared::get_mut(&mut self.inner)?
-            .erased_as_any_mut()
+            .dyn_as_any_mut()
             .downcast_mut::<D>()
     }
 
     /// SDR driver.
     pub fn driver(&self) -> Driver {
-        self.inner.erased_driver()
+        self.inner.dyn_driver()
     }
 
     /// Identifier for the device, e.g. its serial.
     pub fn id(&self) -> impl Future<Output = Result<String, Error>> + MaybeSend + '_ {
-        self.inner.erased_async_id()
+        self.inner.dyn_id()
     }
 
     /// Device info that can be displayed to the user.
     pub fn info(&self) -> impl Future<Output = Result<Args, Error>> + MaybeSend + '_ {
-        self.inner.erased_async_info()
+        self.inner.dyn_info()
     }
 
     /// Number of supported channels.
@@ -1684,12 +1678,12 @@ impl AsyncDynDevice {
         &self,
         direction: Direction,
     ) -> impl Future<Output = Result<usize, Error>> + MaybeSend + '_ {
-        self.inner.erased_async_num_channels(direction)
+        self.inner.dyn_num_channels(direction)
     }
 
     /// Whether this device supports simultaneous reception and transmission.
     pub fn full_duplex(&self) -> impl Future<Output = Result<bool, Error>> + MaybeSend + '_ {
-        self.inner.erased_async_full_duplex()
+        self.inner.dyn_full_duplex()
     }
 
     /// Structured runtime capabilities for the device.
@@ -1780,22 +1774,22 @@ impl AsyncDeviceInfo for AsyncDynDevice {
     }
 
     fn driver(&self) -> Driver {
-        self.inner.erased_driver()
+        self.inner.dyn_driver()
     }
 
     async fn async_id(&self) -> Result<String, Error> {
-        self.inner.erased_async_id().await
+        self.inner.dyn_id().await
     }
 
     async fn async_info(&self) -> Result<Args, Error> {
-        self.inner.erased_async_info().await
+        self.inner.dyn_info().await
     }
     async fn async_num_channels(&self, direction: Direction) -> Result<usize, Error> {
-        self.inner.erased_async_num_channels(direction).await
+        self.inner.dyn_num_channels(direction).await
     }
 
     async fn async_full_duplex(&self) -> Result<bool, Error> {
-        self.inner.erased_async_full_duplex().await
+        self.inner.dyn_full_duplex().await
     }
 }
 
@@ -1810,7 +1804,7 @@ impl AsyncRxDevice for AsyncDynDevice {
         self.inner
             .async_rx_device()
             .ok_or_else(|| Error::unsupported(Capability::RxStreaming))?
-            .erased_async_rx_streamer(channels, args)
+            .dyn_rx_streamer(channels, args)
             .await
     }
 }
@@ -1826,7 +1820,7 @@ impl AsyncTxDevice for AsyncDynDevice {
         self.inner
             .async_tx_device()
             .ok_or_else(|| Error::unsupported(Capability::TxStreaming))?
-            .erased_async_tx_streamer(channels, args)
+            .dyn_tx_streamer(channels, args)
             .await
     }
 }
@@ -1851,14 +1845,14 @@ impl_dyn_control!(
         self.inner
             .async_antenna_control()
             .ok_or_else(|| Error::unsupported(Capability::Antenna))?
-            .erased_async_antennas(direction, channel)
+            .dyn_antennas(direction, channel)
             .await
     },
     async fn async_antenna(&self, direction: Direction, channel: usize) -> Result<String, Error> {
         self.inner
             .async_antenna_control()
             .ok_or_else(|| Error::unsupported(Capability::Antenna))?
-            .erased_async_antenna(direction, channel)
+            .dyn_antenna(direction, channel)
             .await
     },
     async fn async_set_antenna(
@@ -1870,7 +1864,7 @@ impl_dyn_control!(
         self.inner
             .async_antenna_control()
             .ok_or_else(|| Error::unsupported(Capability::Antenna))?
-            .erased_async_set_antenna(direction, channel, name)
+            .dyn_set_antenna(direction, channel, name)
             .await
     }
 );
@@ -1884,7 +1878,7 @@ impl AsyncAgcControl for AsyncDynDevice {
         self.inner
             .async_agc_control()
             .ok_or_else(|| Error::unsupported(Capability::Agc))?
-            .erased_async_agc_available(direction, channel)
+            .dyn_agc_available(direction, channel)
             .await
     }
 
@@ -1892,7 +1886,7 @@ impl AsyncAgcControl for AsyncDynDevice {
         self.inner
             .async_agc_control()
             .ok_or_else(|| Error::unsupported(Capability::Agc))?
-            .erased_async_agc_enabled(direction, channel)
+            .dyn_agc_enabled(direction, channel)
             .await
     }
 
@@ -1905,7 +1899,7 @@ impl AsyncAgcControl for AsyncDynDevice {
         self.inner
             .async_agc_control()
             .ok_or_else(|| Error::unsupported(Capability::Agc))?
-            .erased_async_set_agc_enabled(direction, channel, enabled)
+            .dyn_set_agc_enabled(direction, channel, enabled)
             .await
     }
 }
@@ -1919,7 +1913,7 @@ impl AsyncGainControl for AsyncDynDevice {
         self.inner
             .async_gain_control()
             .ok_or_else(|| Error::unsupported(Capability::Gain))?
-            .erased_async_gain_elements(direction, channel)
+            .dyn_gain_elements(direction, channel)
             .await
     }
     async fn async_set_gain(
@@ -1931,21 +1925,21 @@ impl AsyncGainControl for AsyncDynDevice {
         self.inner
             .async_gain_control()
             .ok_or_else(|| Error::unsupported(Capability::Gain))?
-            .erased_async_set_gain(direction, channel, gain)
+            .dyn_set_gain(direction, channel, gain)
             .await
     }
     async fn async_gain(&self, direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
         self.inner
             .async_gain_control()
             .ok_or_else(|| Error::unsupported(Capability::Gain))?
-            .erased_async_gain(direction, channel)
+            .dyn_gain(direction, channel)
             .await
     }
     async fn async_gain_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
         self.inner
             .async_gain_control()
             .ok_or_else(|| Error::unsupported(Capability::Gain))?
-            .erased_async_gain_range(direction, channel)
+            .dyn_gain_range(direction, channel)
             .await
     }
     async fn async_set_gain_element(
@@ -1958,7 +1952,7 @@ impl AsyncGainControl for AsyncDynDevice {
         self.inner
             .async_gain_control()
             .ok_or_else(|| Error::unsupported(Capability::Gain))?
-            .erased_async_set_gain_element(direction, channel, name, gain)
+            .dyn_set_gain_element(direction, channel, name, gain)
             .await
     }
     async fn async_gain_element(
@@ -1970,7 +1964,7 @@ impl AsyncGainControl for AsyncDynDevice {
         self.inner
             .async_gain_control()
             .ok_or_else(|| Error::unsupported(Capability::Gain))?
-            .erased_async_gain_element(direction, channel, name)
+            .dyn_gain_element(direction, channel, name)
             .await
     }
     async fn async_gain_element_range(
@@ -1982,7 +1976,7 @@ impl AsyncGainControl for AsyncDynDevice {
         self.inner
             .async_gain_control()
             .ok_or_else(|| Error::unsupported(Capability::Gain))?
-            .erased_async_gain_element_range(direction, channel, name)
+            .dyn_gain_element_range(direction, channel, name)
             .await
     }
 }
@@ -1996,14 +1990,14 @@ impl AsyncFrequencyControl for AsyncDynDevice {
         self.inner
             .async_frequency_control()
             .ok_or_else(|| Error::unsupported(Capability::Frequency))?
-            .erased_async_frequency_range(direction, channel)
+            .dyn_frequency_range(direction, channel)
             .await
     }
     async fn async_frequency(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
         self.inner
             .async_frequency_control()
             .ok_or_else(|| Error::unsupported(Capability::Frequency))?
-            .erased_async_frequency(direction, channel)
+            .dyn_frequency(direction, channel)
             .await
     }
     async fn async_set_frequency(
@@ -2016,7 +2010,7 @@ impl AsyncFrequencyControl for AsyncDynDevice {
         self.inner
             .async_frequency_control()
             .ok_or_else(|| Error::unsupported(Capability::Frequency))?
-            .erased_async_set_frequency(direction, channel, frequency, args)
+            .dyn_set_frequency(direction, channel, frequency, args)
             .await
     }
     async fn async_frequency_components(
@@ -2027,7 +2021,7 @@ impl AsyncFrequencyControl for AsyncDynDevice {
         self.inner
             .async_frequency_control()
             .ok_or_else(|| Error::unsupported(Capability::Frequency))?
-            .erased_async_frequency_components(direction, channel)
+            .dyn_frequency_components(direction, channel)
             .await
     }
     async fn async_component_frequency_range(
@@ -2039,7 +2033,7 @@ impl AsyncFrequencyControl for AsyncDynDevice {
         self.inner
             .async_frequency_control()
             .ok_or_else(|| Error::unsupported(Capability::Frequency))?
-            .erased_async_component_frequency_range(direction, channel, name)
+            .dyn_component_frequency_range(direction, channel, name)
             .await
     }
     async fn async_component_frequency(
@@ -2051,7 +2045,7 @@ impl AsyncFrequencyControl for AsyncDynDevice {
         self.inner
             .async_frequency_control()
             .ok_or_else(|| Error::unsupported(Capability::Frequency))?
-            .erased_async_component_frequency(direction, channel, name)
+            .dyn_component_frequency(direction, channel, name)
             .await
     }
     async fn async_set_component_frequency(
@@ -2064,7 +2058,7 @@ impl AsyncFrequencyControl for AsyncDynDevice {
         self.inner
             .async_frequency_control()
             .ok_or_else(|| Error::unsupported(Capability::Frequency))?
-            .erased_async_set_component_frequency(direction, channel, name, frequency)
+            .dyn_set_component_frequency(direction, channel, name, frequency)
             .await
     }
 }
@@ -2074,7 +2068,7 @@ impl AsyncSampleRateControl for AsyncDynDevice {
         self.inner
             .async_sample_rate_control()
             .ok_or_else(|| Error::unsupported(Capability::SampleRate))?
-            .erased_async_sample_rate(direction, channel)
+            .dyn_sample_rate(direction, channel)
             .await
     }
     async fn async_set_sample_rate(
@@ -2086,7 +2080,7 @@ impl AsyncSampleRateControl for AsyncDynDevice {
         self.inner
             .async_sample_rate_control()
             .ok_or_else(|| Error::unsupported(Capability::SampleRate))?
-            .erased_async_set_sample_rate(direction, channel, rate)
+            .dyn_set_sample_rate(direction, channel, rate)
             .await
     }
     async fn async_get_sample_rate_range(
@@ -2097,7 +2091,7 @@ impl AsyncSampleRateControl for AsyncDynDevice {
         self.inner
             .async_sample_rate_control()
             .ok_or_else(|| Error::unsupported(Capability::SampleRate))?
-            .erased_async_get_sample_rate_range(direction, channel)
+            .dyn_get_sample_rate_range(direction, channel)
             .await
     }
 }
@@ -2107,7 +2101,7 @@ impl AsyncBandwidthControl for AsyncDynDevice {
         self.inner
             .async_bandwidth_control()
             .ok_or_else(|| Error::unsupported(Capability::Bandwidth))?
-            .erased_async_bandwidth(direction, channel)
+            .dyn_bandwidth(direction, channel)
             .await
     }
     async fn async_set_bandwidth(
@@ -2119,7 +2113,7 @@ impl AsyncBandwidthControl for AsyncDynDevice {
         self.inner
             .async_bandwidth_control()
             .ok_or_else(|| Error::unsupported(Capability::Bandwidth))?
-            .erased_async_set_bandwidth(direction, channel, bandwidth)
+            .dyn_set_bandwidth(direction, channel, bandwidth)
             .await
     }
     async fn async_get_bandwidth_range(
@@ -2130,7 +2124,7 @@ impl AsyncBandwidthControl for AsyncDynDevice {
         self.inner
             .async_bandwidth_control()
             .ok_or_else(|| Error::unsupported(Capability::Bandwidth))?
-            .erased_async_get_bandwidth_range(direction, channel)
+            .dyn_get_bandwidth_range(direction, channel)
             .await
     }
 }
@@ -2144,7 +2138,7 @@ impl AsyncDcOffsetControl for AsyncDynDevice {
         self.inner
             .async_dc_offset_control()
             .ok_or_else(|| Error::unsupported(Capability::DcOffset))?
-            .erased_async_dc_offset_available(direction, channel)
+            .dyn_dc_offset_available(direction, channel)
             .await
     }
     async fn async_dc_offset_enabled(
@@ -2155,7 +2149,7 @@ impl AsyncDcOffsetControl for AsyncDynDevice {
         self.inner
             .async_dc_offset_control()
             .ok_or_else(|| Error::unsupported(Capability::DcOffset))?
-            .erased_async_dc_offset_enabled(direction, channel)
+            .dyn_dc_offset_enabled(direction, channel)
             .await
     }
     async fn async_set_dc_offset_enabled(
@@ -2167,7 +2161,7 @@ impl AsyncDcOffsetControl for AsyncDynDevice {
         self.inner
             .async_dc_offset_control()
             .ok_or_else(|| Error::unsupported(Capability::DcOffset))?
-            .erased_async_set_dc_offset_enabled(direction, channel, enabled)
+            .dyn_set_dc_offset_enabled(direction, channel, enabled)
             .await
     }
 }
@@ -2581,7 +2575,7 @@ mod wasm_non_send_compile_check {
     }
 
     impl AsyncDynDeviceBackend for LocalOnly {
-        fn async_rx_device(&self) -> Option<&dyn ErasedAsyncRxDevice> {
+        fn async_rx_device(&self) -> Option<&dyn DynAsyncRxDevice> {
             Some(self)
         }
     }

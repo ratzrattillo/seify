@@ -56,7 +56,7 @@ impl<T: ?Sized> MaybeSync for T {}
 /// Extension trait for boxing futures into [`BoxedFuture`].
 #[cfg(not(target_arch = "wasm32"))]
 pub trait AsyncFutureExt: Future + Send + Sized {
-    /// Box this future for Seify's erased asynchronous API.
+    /// Box this future for Seify's dynamic asynchronous API.
     fn boxed_async<'a>(self) -> BoxedFuture<'a, Self::Output>
     where
         Self: 'a,
@@ -71,7 +71,7 @@ impl<F> AsyncFutureExt for F where F: Future + Send + Sized {}
 /// Extension trait for boxing futures into [`BoxedFuture`].
 #[cfg(target_arch = "wasm32")]
 pub trait AsyncFutureExt: Future + Sized {
-    /// Box this future for Seify's erased asynchronous API.
+    /// Box this future for Seify's dynamic asynchronous API.
     fn boxed_async<'a>(self) -> BoxedFuture<'a, Self::Output>
     where
         Self: 'a,

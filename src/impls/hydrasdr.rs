@@ -20,11 +20,7 @@ use crate::Direction::*;
 #[cfg(any(feature = "smol", feature = "tokio"))]
 use crate::{
     async_compat::{timeout_from_micros, with_timeout, TimeoutResult},
-    dev::{
-        AsyncDynDeviceBackend, AsyncTypedDeviceBackend, ErasedAsyncAgcControl,
-        ErasedAsyncAntennaControl, ErasedAsyncBandwidthControl, ErasedAsyncFrequencyControl,
-        ErasedAsyncGainControl, ErasedAsyncRxDevice, ErasedAsyncSampleRateControl,
-    },
+    dev::{AsyncDynDeviceBackend, AsyncTypedDeviceBackend},
     AsyncAgcControl, AsyncAntennaControl, AsyncBandwidthControl, AsyncDeviceInfo,
     AsyncFrequencyControl, AsyncGainControl, AsyncRxDevice, AsyncSampleRateControl,
 };
@@ -1425,31 +1421,31 @@ impl AsyncDeviceInfo for AsyncHydraSdr {
 
 #[cfg(any(feature = "smol", feature = "tokio"))]
 impl AsyncDynDeviceBackend for AsyncHydraSdr {
-    fn async_rx_device(&self) -> Option<&dyn ErasedAsyncRxDevice> {
+    fn async_rx_device(&self) -> Option<&dyn crate::dev::DynAsyncRxDevice> {
         Some(self)
     }
 
-    fn async_antenna_control(&self) -> Option<&dyn ErasedAsyncAntennaControl> {
+    fn async_antenna_control(&self) -> Option<&dyn crate::dev::DynAsyncAntennaControl> {
         Some(self)
     }
 
-    fn async_agc_control(&self) -> Option<&dyn ErasedAsyncAgcControl> {
+    fn async_agc_control(&self) -> Option<&dyn crate::dev::DynAsyncAgcControl> {
         Some(self)
     }
 
-    fn async_gain_control(&self) -> Option<&dyn ErasedAsyncGainControl> {
+    fn async_gain_control(&self) -> Option<&dyn crate::dev::DynAsyncGainControl> {
         Some(self)
     }
 
-    fn async_frequency_control(&self) -> Option<&dyn ErasedAsyncFrequencyControl> {
+    fn async_frequency_control(&self) -> Option<&dyn crate::dev::DynAsyncFrequencyControl> {
         Some(self)
     }
 
-    fn async_sample_rate_control(&self) -> Option<&dyn ErasedAsyncSampleRateControl> {
+    fn async_sample_rate_control(&self) -> Option<&dyn crate::dev::DynAsyncSampleRateControl> {
         Some(self)
     }
 
-    fn async_bandwidth_control(&self) -> Option<&dyn ErasedAsyncBandwidthControl> {
+    fn async_bandwidth_control(&self) -> Option<&dyn crate::dev::DynAsyncBandwidthControl> {
         Some(self)
     }
 }

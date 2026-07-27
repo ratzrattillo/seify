@@ -183,33 +183,32 @@ where
             Ok(ChannelCapabilities {
                 channel,
                 controls: ChannelControls {
-                    antennas: optional_erased_capability(dev.antenna_control(), |cap| {
+                    antennas: optional_dyn_capability(dev.antenna_control(), |cap| {
                         cap.antennas(direction, channel)
                     })?,
-                    agc: erased_capability_available(dev.agc_control(), |cap| {
+                    agc: dyn_capability_available(dev.agc_control(), |cap| {
                         cap.agc_available(direction, channel)
                     })?,
-                    gain_elements: optional_erased_capability(dev.gain_control(), |cap| {
+                    gain_elements: optional_dyn_capability(dev.gain_control(), |cap| {
                         cap.gain_elements(direction, channel)
                     })?,
-                    gain_range: optional_erased_capability(dev.gain_control(), |cap| {
+                    gain_range: optional_dyn_capability(dev.gain_control(), |cap| {
                         cap.gain_range(direction, channel)
                     })?,
-                    frequency_components: optional_erased_capability(
+                    frequency_components: optional_dyn_capability(
                         dev.frequency_control(),
                         |cap| cap.frequency_components(direction, channel),
                     )?,
-                    frequency_range: optional_erased_capability(dev.frequency_control(), |cap| {
+                    frequency_range: optional_dyn_capability(dev.frequency_control(), |cap| {
                         cap.frequency_range(direction, channel)
                     })?,
-                    sample_rate_range: optional_erased_capability(
-                        dev.sample_rate_control(),
-                        |cap| cap.get_sample_rate_range(direction, channel),
-                    )?,
-                    bandwidth_range: optional_erased_capability(dev.bandwidth_control(), |cap| {
+                    sample_rate_range: optional_dyn_capability(dev.sample_rate_control(), |cap| {
+                        cap.get_sample_rate_range(direction, channel)
+                    })?,
+                    bandwidth_range: optional_dyn_capability(dev.bandwidth_control(), |cap| {
                         cap.get_bandwidth_range(direction, channel)
                     })?,
-                    dc_offset: erased_capability_available(dev.dc_offset_control(), |cap| {
+                    dc_offset: dyn_capability_available(dev.dc_offset_control(), |cap| {
                         cap.dc_offset_available(direction, channel)
                     })?,
                 },
@@ -226,7 +225,7 @@ fn optional_capability<T>(result: Result<T, Error>) -> Result<Option<T>, Error> 
     }
 }
 
-fn optional_erased_capability<C: ?Sized, T>(
+fn optional_dyn_capability<C: ?Sized, T>(
     cap: Option<&C>,
     f: impl FnOnce(&C) -> Result<T, Error>,
 ) -> Result<Option<T>, Error> {
@@ -236,7 +235,7 @@ fn optional_erased_capability<C: ?Sized, T>(
     }
 }
 
-fn erased_capability_available<C: ?Sized>(
+fn dyn_capability_available<C: ?Sized>(
     cap: Option<&C>,
     f: impl FnOnce(&C) -> Result<bool, Error>,
 ) -> Result<bool, Error> {

@@ -127,7 +127,7 @@ pub use streamer::TxStreamer;
 ///
 /// Async backend implementations can use `async fn` for the typed async traits;
 /// the trait definitions keep explicit `MaybeSend` future bounds for native and
-/// `wasm32` compatibility. The `Erased*` traits are runtime-dispatch adapters
+/// `wasm32` compatibility. The `DynAsync*` traits are runtime-dispatch adapters
 /// and are usually reached through blanket implementations.
 pub mod dev {
     #[cfg(any(target_arch = "wasm32", feature = "smol", feature = "tokio"))]
@@ -139,18 +139,18 @@ pub mod dev {
     pub use crate::async_device::AsyncDriverBackend;
     pub use crate::async_device::AsyncDynDeviceBackend;
     pub use crate::async_device::AsyncTypedDeviceBackend;
-    pub use crate::async_device::ErasedAsyncAgcControl;
-    pub use crate::async_device::ErasedAsyncAntennaControl;
-    pub use crate::async_device::ErasedAsyncBandwidthControl;
-    pub use crate::async_device::ErasedAsyncDcOffsetControl;
-    pub use crate::async_device::ErasedAsyncDeviceInfo;
-    pub use crate::async_device::ErasedAsyncFrequencyControl;
-    pub use crate::async_device::ErasedAsyncGainControl;
-    pub use crate::async_device::ErasedAsyncRxDevice;
-    pub use crate::async_device::ErasedAsyncSampleRateControl;
-    pub use crate::async_device::ErasedAsyncTxDevice;
-    pub use crate::async_streamer::ErasedAsyncRxStreamer;
-    pub use crate::async_streamer::ErasedAsyncTxStreamer;
+    pub use crate::async_device::DynAsyncAgcControl;
+    pub use crate::async_device::DynAsyncAntennaControl;
+    pub use crate::async_device::DynAsyncBandwidthControl;
+    pub use crate::async_device::DynAsyncDcOffsetControl;
+    pub use crate::async_device::DynAsyncDeviceInfo;
+    pub use crate::async_device::DynAsyncFrequencyControl;
+    pub use crate::async_device::DynAsyncGainControl;
+    pub use crate::async_device::DynAsyncRxDevice;
+    pub use crate::async_device::DynAsyncSampleRateControl;
+    pub use crate::async_device::DynAsyncTxDevice;
+    pub use crate::async_streamer::DynAsyncRxStreamerBackend;
+    pub use crate::async_streamer::DynAsyncTxStreamerBackend;
     pub use crate::device::DynDeviceBackend;
     pub use crate::device::DynRxDevice;
     pub use crate::device::DynTxDevice;
