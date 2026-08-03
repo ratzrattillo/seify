@@ -17,7 +17,6 @@ pub(super) struct Inner {
     pub(super) gains: Vec<GainCache>,
     pub(super) gain_config: GainConfig,
     pub(super) agc: bool,
-    pub(super) active_rx_streams: usize,
     pub(super) min_frequency: f64,
     pub(super) max_frequency: f64,
 }

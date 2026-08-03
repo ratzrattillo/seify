@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -20,11 +21,12 @@ pub struct HydraSdr {
     dev: Arc<Mutex<Option<HydraSdrDevice>>>,
     serial: Option<u64>,
     inner: Arc<Mutex<Inner>>,
+    active_rx_streams: Arc<AtomicUsize>,
 }
 /// HydraSDR RFOne receive streamer.
 pub struct RxStreamer {
     dev: Arc<Mutex<Option<HydraSdrDevice>>>,
-    inner: Arc<Mutex<Inner>>,
+    active_rx_streams: Arc<AtomicUsize>,
     active: bool,
 }
 
@@ -76,15 +78,15 @@ impl HydraSdr {
                 gains,
                 gain_config: GainConfig::Unchanged,
                 agc: false,
-                active_rx_streams: 0,
                 min_frequency,
                 max_frequency,
             })),
+            active_rx_streams: Arc::new(AtomicUsize::new(0)),
         })
     }
 
     fn ensure_rx_config_idle(&self) -> Result<(), Error> {
-        if self.inner.lock().unwrap().active_rx_streams == 0 {
+        if self.active_rx_streams.load(Ordering::SeqCst) == 0 {
             Ok(())
         } else {
             Err(Error::Busy)
@@ -562,7 +564,7 @@ impl RxDevice for HydraSdr {
         self.ensure_rx_config_idle()?;
         Ok(RxStreamer::new(
             Arc::clone(&self.dev),
-            Arc::clone(&self.inner),
+            Arc::clone(&self.active_rx_streams),
         ))
     }
 }
@@ -736,10 +738,10 @@ impl BandwidthControl for HydraSdr {
 }
 
 impl RxStreamer {
-    fn new(dev: Arc<Mutex<Option<HydraSdrDevice>>>, inner: Arc<Mutex<Inner>>) -> Self {
+    fn new(dev: Arc<Mutex<Option<HydraSdrDevice>>>, active_rx_streams: Arc<AtomicUsize>) -> Self {
         Self {
             dev,
-            inner,
+            active_rx_streams,
             active: false,
         }
     }
@@ -761,7 +763,7 @@ impl crate::RxStreamer for RxStreamer {
             return Err(Error::DeviceDisconnected);
         }
         self.active = true;
-        self.inner.lock().unwrap().active_rx_streams += 1;
+        self.active_rx_streams.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -771,8 +773,8 @@ impl crate::RxStreamer for RxStreamer {
         }
         if self.active {
             self.active = false;
-            let mut inner = self.inner.lock().unwrap();
-            inner.active_rx_streams = inner.active_rx_streams.saturating_sub(1);
+            let previous = self.active_rx_streams.fetch_sub(1, Ordering::SeqCst);
+            debug_assert!(previous > 0);
         }
         Ok(())
     }

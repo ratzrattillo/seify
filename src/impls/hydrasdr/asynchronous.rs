@@ -200,7 +200,6 @@ impl AsyncHydraSdr {
                 gains,
                 gain_config: GainConfig::Unchanged,
                 agc: false,
-                active_rx_streams: 0,
                 min_frequency,
                 max_frequency,
             })),
