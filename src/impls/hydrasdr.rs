@@ -84,18 +84,49 @@ impl AsyncHydraSession {
         }
     }
 
-    fn device_mut(&mut self) -> Result<&mut HydraSdrDevice, Error> {
-        if matches!(self, Self::Stream(_)) {
-            let Self::Stream(stream) = std::mem::replace(self, Self::Disconnected) else {
-                unreachable!();
-            };
-            *self = Self::Device(Box::new((*stream).into_device()));
-        }
+    async fn set_frequency_hz(&mut self, frequency_hz: u64) -> Result<(), Error> {
         match self {
-            Self::Device(device) => Ok(device),
-            Self::Disconnected => Err(Error::DeviceDisconnected),
-            Self::Stream(_) => unreachable!(),
+            Self::Device(device) => device.set_frequency_hz_async(frequency_hz).await,
+            Self::Stream(stream) => stream.set_frequency_hz_async(frequency_hz).await,
+            Self::Disconnected => return Err(Error::DeviceDisconnected),
         }
+        .map_err(map_hydrasdr_error)
+    }
+
+    async fn set_sample_rate_hz(&mut self, sample_rate_hz: u32) -> Result<(), Error> {
+        match self {
+            Self::Device(device) => device.set_sample_rate_hz_async(sample_rate_hz).await,
+            Self::Stream(stream) => stream.set_sample_rate_hz_async(sample_rate_hz).await,
+            Self::Disconnected => return Err(Error::DeviceDisconnected),
+        }
+        .map_err(map_hydrasdr_error)
+    }
+
+    async fn set_bandwidth_hz(&mut self, bandwidth_hz: u32) -> Result<(), Error> {
+        match self {
+            Self::Device(device) => device.set_bandwidth_hz_async(bandwidth_hz).await,
+            Self::Stream(stream) => stream.set_bandwidth_hz_async(bandwidth_hz).await,
+            Self::Disconnected => return Err(Error::DeviceDisconnected),
+        }
+        .map_err(map_hydrasdr_error)
+    }
+
+    async fn set_rf_port(&mut self, port: RfPort) -> Result<(), Error> {
+        match self {
+            Self::Device(device) => device.set_rf_port_async(port).await,
+            Self::Stream(stream) => stream.set_rf_port_async(port).await,
+            Self::Disconnected => return Err(Error::DeviceDisconnected),
+        }
+        .map_err(map_hydrasdr_error)
+    }
+
+    async fn set_gain(&mut self, gain: GainConfig) -> Result<(), Error> {
+        match self {
+            Self::Device(device) => device.set_gain_async(gain).await,
+            Self::Stream(stream) => stream.set_gain_async(gain).await,
+            Self::Disconnected => return Err(Error::DeviceDisconnected),
+        }
+        .map_err(map_hydrasdr_error)
     }
 }
 
@@ -150,15 +181,6 @@ async fn cleanup_abandoned_session(
     }
     cleanup_needed.store(false, Ordering::SeqCst);
     Ok(())
-}
-
-#[cfg(any(feature = "smol", feature = "tokio"))]
-async fn prepare_session_device<'a>(
-    session: &'a mut AsyncHydraSession,
-    cleanup_needed: &AtomicBool,
-) -> Result<&'a mut HydraSdrDevice, Error> {
-    cleanup_abandoned_session(session, cleanup_needed).await?;
-    session.device_mut()
 }
 
 #[derive(Clone)]
@@ -336,6 +358,16 @@ impl AsyncHydraSdr {
         } else {
             Err(Error::Busy)
         }
+    }
+
+    async fn lock_idle_session(
+        &self,
+    ) -> Result<futures::lock::MutexGuard<'_, AsyncHydraSession>, Error> {
+        self.ensure_rx_config_idle()?;
+        let mut session = self.session.lock().await;
+        self.ensure_rx_config_idle()?;
+        cleanup_abandoned_session(&mut session, &self.cleanup_needed).await?;
+        Ok(session)
     }
 }
 
@@ -819,26 +851,13 @@ impl AsyncHydraSdr {
         name: &str,
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        self.ensure_rx_config_idle()?;
-        let (name, _) = antenna_port(name).ok_or(Error::invalid_argument(
+        let (name, port) = antenna_port(name).ok_or(Error::invalid_argument(
             "hydrasdr",
             "invalid HydraSDR argument",
         ))?;
-        let mut inner = self.inner.lock().await;
-        let old = inner.antenna;
-        inner.antenna = name;
-        let mut session = self.session.lock().await;
-        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
-            Ok(dev) => dev,
-            Err(err) => {
-                inner.antenna = old;
-                return Err(err);
-            }
-        };
-        if let Err(err) = configure_device_async(dev, &inner).await {
-            inner.antenna = old;
-            return Err(err);
-        }
+        let mut session = self.lock_idle_session().await?;
+        session.set_rf_port(port).await?;
+        self.inner.lock().await.antenna = name;
         Ok(())
     }
 
@@ -854,26 +873,18 @@ impl AsyncHydraSdr {
         agc: bool,
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        self.ensure_rx_config_idle()?;
+        let gain = GainConfig::Manual {
+            lna: None,
+            mixer: None,
+            vga: None,
+            lna_agc: Some(agc),
+            mixer_agc: Some(agc),
+        };
+        let mut session = self.lock_idle_session().await?;
+        session.set_gain(gain).await?;
         let mut inner = self.inner.lock().await;
-        let old_agc = inner.agc;
-        let old_gain_config = inner.gain_config;
         inner.agc = agc;
         inner.gain_config = manual_gain_config(&inner);
-        let mut session = self.session.lock().await;
-        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
-            Ok(dev) => dev,
-            Err(err) => {
-                inner.agc = old_agc;
-                inner.gain_config = old_gain_config;
-                return Err(err);
-            }
-        };
-        if let Err(err) = configure_device_async(dev, &inner).await {
-            inner.agc = old_agc;
-            inner.gain_config = old_gain_config;
-            return Err(err);
-        }
         Ok(())
     }
 
@@ -929,10 +940,36 @@ impl AsyncHydraSdr {
             return Err(Error::out_of_range("gain", range, gain));
         }
 
-        self.ensure_rx_config_idle()?;
+        let gain_update = match gain_type {
+            GainType::Linearity => GainConfig::Preset(GainPreset::Linearity(gain.round() as u8)),
+            GainType::Sensitivity => {
+                GainConfig::Preset(GainPreset::Sensitivity(gain.round() as u8))
+            }
+            GainType::Lna => GainConfig::Manual {
+                lna: Some(gain.round() as u8),
+                mixer: None,
+                vga: None,
+                lna_agc: None,
+                mixer_agc: None,
+            },
+            GainType::Mixer => GainConfig::Manual {
+                lna: None,
+                mixer: Some(gain.round() as u8),
+                vga: None,
+                lna_agc: None,
+                mixer_agc: None,
+            },
+            GainType::Vga => GainConfig::Manual {
+                lna: None,
+                mixer: None,
+                vga: Some(gain.round() as u8),
+                lna_agc: None,
+                mixer_agc: None,
+            },
+        };
+        let mut session = self.lock_idle_session().await?;
+        session.set_gain(gain_update).await?;
         let mut inner = self.inner.lock().await;
-        let old_gains = inner.gains.clone();
-        let old_gain_config = inner.gain_config;
         if let Some(cached) = inner
             .gains
             .iter_mut()
@@ -941,26 +978,9 @@ impl AsyncHydraSdr {
             cached.value = gain;
         }
         inner.gain_config = match gain_type {
-            GainType::Linearity => GainConfig::Preset(GainPreset::Linearity(gain.round() as u8)),
-            GainType::Sensitivity => {
-                GainConfig::Preset(GainPreset::Sensitivity(gain.round() as u8))
-            }
+            GainType::Linearity | GainType::Sensitivity => gain_update,
             GainType::Lna | GainType::Mixer | GainType::Vga => manual_gain_config(&inner),
         };
-        let mut session = self.session.lock().await;
-        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
-            Ok(dev) => dev,
-            Err(err) => {
-                inner.gains = old_gains;
-                inner.gain_config = old_gain_config;
-                return Err(err);
-            }
-        };
-        if let Err(err) = configure_device_async(dev, &inner).await {
-            inner.gains = old_gains;
-            inner.gain_config = old_gain_config;
-            return Err(err);
-        }
         Ok(())
     }
 
@@ -1099,22 +1119,9 @@ impl AsyncHydraSdr {
         if !range.contains(frequency) {
             return Err(Error::out_of_range("frequency", range, frequency));
         }
-        self.ensure_rx_config_idle()?;
-        let mut inner = self.inner.lock().await;
-        let old = inner.frequency;
-        inner.frequency = Some(frequency);
-        let mut session = self.session.lock().await;
-        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
-            Ok(dev) => dev,
-            Err(err) => {
-                inner.frequency = old;
-                return Err(err);
-            }
-        };
-        if let Err(err) = configure_device_async(dev, &inner).await {
-            inner.frequency = old;
-            return Err(err);
-        }
+        let mut session = self.lock_idle_session().await?;
+        session.set_frequency_hz(frequency as u64).await?;
+        self.inner.lock().await.frequency = Some(frequency);
         Ok(())
     }
 
@@ -1137,22 +1144,9 @@ impl AsyncHydraSdr {
         if !range.contains(rate) {
             return Err(Error::out_of_range("sample_rate", range, rate));
         }
-        self.ensure_rx_config_idle()?;
-        let mut inner = self.inner.lock().await;
-        let old = inner.sample_rate;
-        inner.sample_rate = Some(rate);
-        let mut session = self.session.lock().await;
-        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
-            Ok(dev) => dev,
-            Err(err) => {
-                inner.sample_rate = old;
-                return Err(err);
-            }
-        };
-        if let Err(err) = configure_device_async(dev, &inner).await {
-            inner.sample_rate = old;
-            return Err(err);
-        }
+        let mut session = self.lock_idle_session().await?;
+        session.set_sample_rate_hz(rate as u32).await?;
+        self.inner.lock().await.sample_rate = Some(rate);
         Ok(())
     }
 
@@ -1198,22 +1192,9 @@ impl AsyncHydraSdr {
         if !range.contains(bw) {
             return Err(Error::out_of_range("bandwidth", range, bw));
         }
-        self.ensure_rx_config_idle()?;
-        let mut inner = self.inner.lock().await;
-        let old = inner.bandwidth;
-        inner.bandwidth = Some(bw);
-        let mut session = self.session.lock().await;
-        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
-            Ok(dev) => dev,
-            Err(err) => {
-                inner.bandwidth = old;
-                return Err(err);
-            }
-        };
-        if let Err(err) = configure_device_async(dev, &inner).await {
-            inner.bandwidth = old;
-            return Err(err);
-        }
+        let mut session = self.lock_idle_session().await?;
+        session.set_bandwidth_hz(bw as u32).await?;
+        self.inner.lock().await.bandwidth = Some(bw);
         Ok(())
     }
 
@@ -2166,33 +2147,6 @@ fn configure_device(dev: &mut HydraSdrDevice, inner: &Inner) -> Result<(), Error
     }
     let config = builder.build().map_err(map_hydrasdr_error)?;
     dev.configure(&config).map_err(map_hydrasdr_error)
-}
-
-#[cfg(any(feature = "smol", feature = "tokio"))]
-async fn configure_device_async(dev: &mut HydraSdrDevice, inner: &Inner) -> Result<(), Error> {
-    let (_, port) = antenna_port(inner.antenna).ok_or(Error::invalid_argument(
-        "hydrasdr",
-        "invalid HydraSDR argument",
-    ))?;
-    let mut builder = Config::builder()
-        .sample_format(SampleFormat::F32Iq)
-        .decimation_mode(DecimationMode::HighDefinition)
-        .rf_port(port)
-        .gain(inner.gain_config)
-        .packing(false);
-    if let Some(frequency) = inner.frequency {
-        builder = builder.frequency_hz(frequency as u64);
-    }
-    if let Some(sample_rate) = inner.sample_rate {
-        builder = builder.sample_rate_hz(sample_rate as u32);
-    }
-    if let Some(bandwidth) = inner.bandwidth {
-        builder = builder.bandwidth(Bandwidth::ManualHz(bandwidth as u32));
-    }
-    let config = builder.build().map_err(map_hydrasdr_error)?;
-    dev.configure_async(&config)
-        .await
-        .map_err(map_hydrasdr_error)
 }
 
 fn manual_gain_config(inner: &Inner) -> GainConfig {
