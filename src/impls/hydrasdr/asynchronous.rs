@@ -563,20 +563,7 @@ impl AsyncHydraSdr {
     ) -> Result<Range, Error> {
         check_rx(direction, channel)?;
         let inner = self.inner.lock().await;
-        if inner.sample_rates.is_empty() {
-            Ok(Range::new(vec![RangeItem::Interval(
-                DEFAULT_SAMPLE_RATE_MIN,
-                u32::MAX as f64,
-            )]))
-        } else {
-            Ok(Range::new(
-                inner
-                    .sample_rates
-                    .iter()
-                    .map(|rate| RangeItem::Value(*rate as f64))
-                    .collect(),
-            ))
-        }
+        sample_rate_range(&inner.sample_rates)
     }
 
     async fn bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error> {

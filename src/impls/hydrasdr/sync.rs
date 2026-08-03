@@ -532,19 +532,7 @@ impl HydraSdr {
     fn get_sample_rate_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
         check_rx(direction, channel)?;
         let rates = &self.inner.lock().unwrap().sample_rates;
-        if rates.is_empty() {
-            Ok(Range::new(vec![RangeItem::Interval(
-                DEFAULT_SAMPLE_RATE_MIN,
-                u32::MAX as f64,
-            )]))
-        } else {
-            Ok(Range::new(
-                rates
-                    .iter()
-                    .map(|rate| RangeItem::Value(*rate as f64))
-                    .collect(),
-            ))
-        }
+        sample_rate_range(rates)
     }
 
     fn bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error> {

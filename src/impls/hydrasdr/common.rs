@@ -4,7 +4,6 @@ use crate::Direction::*;
 use crate::{Args, Capability, Direction, Error, Range, RangeItem};
 
 pub(super) const F32_RX_MTU: usize = hydrasdr_rs::MAX_F32_IQ_SAMPLES_PER_TRANSFER;
-pub(super) const DEFAULT_SAMPLE_RATE_MIN: f64 = 10_000.0;
 #[derive(Clone)]
 pub(super) struct ReceiverState {
     pub(super) antenna: &'static str,
@@ -21,14 +20,21 @@ pub(super) struct ReceiverState {
 }
 
 pub(super) fn bandwidth_range(bandwidths: &[u32]) -> Result<Range, Error> {
-    if bandwidths.is_empty() {
-        return Err(Error::unsupported(Capability::Bandwidth));
-    }
+    discrete_range(bandwidths, Capability::Bandwidth)
+}
 
+pub(super) fn sample_rate_range(sample_rates: &[u32]) -> Result<Range, Error> {
+    discrete_range(sample_rates, Capability::SampleRate)
+}
+
+fn discrete_range(values: &[u32], capability: Capability) -> Result<Range, Error> {
+    if values.is_empty() {
+        return Err(Error::unsupported(capability));
+    }
     Ok(Range::new(
-        bandwidths
+        values
             .iter()
-            .map(|bandwidth| RangeItem::Value(*bandwidth as f64))
+            .map(|value| RangeItem::Value(*value as f64))
             .collect(),
     ))
 }
@@ -225,6 +231,19 @@ mod tests {
         assert!(range.contains(1_750_000.0));
         assert!(range.contains(2_500_000.0));
         assert!(!range.contains(2_000_000.0));
+    }
+
+    #[test]
+    fn empty_sample_rate_list_is_unsupported() {
+        assert!(sample_rate_range(&[]).unwrap_err().is_unsupported());
+    }
+
+    #[test]
+    fn sample_rate_range_contains_reported_values_only() {
+        let range = sample_rate_range(&[2_500_000, 10_000_000]).unwrap();
+        assert!(range.contains(2_500_000.0));
+        assert!(range.contains(10_000_000.0));
+        assert!(!range.contains(5_000_000.0));
     }
 
     #[test]
