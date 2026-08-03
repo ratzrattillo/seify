@@ -1,5 +1,4 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
 
 use futures::lock::Mutex as AsyncMutex;
 use hydrasdr_rs::{
@@ -13,7 +12,7 @@ use super::common::*;
 use crate::dev::WebUsbDeviceFilter;
 use crate::Direction::*;
 use crate::{
-    async_compat::{timeout_from_micros, with_timeout, TimeoutResult},
+    async_compat::{timeout_from_micros, with_timeout, Shared, TimeoutResult},
     dev::AsyncTypedDeviceBackend,
     Args, AsyncAgcControl, AsyncAntennaControl, AsyncBandwidthControl, AsyncDeviceInfo,
     AsyncFrequencyControl, AsyncGainControl, AsyncRxDevice, AsyncSampleRateControl, Capability,
@@ -23,11 +22,11 @@ use crate::{
 /// Asynchronous HydraSDR RFOne device backend.
 #[derive(Clone)]
 pub struct AsyncHydraSdr {
-    session: Arc<AsyncMutex<AsyncHydraSession>>,
+    session: Shared<AsyncMutex<AsyncHydraSession>>,
     serial: Option<u64>,
-    inner: Arc<AsyncMutex<ReceiverState>>,
-    active_rx_streams: Arc<AtomicUsize>,
-    cleanup_needed: Arc<AtomicBool>,
+    inner: Shared<AsyncMutex<ReceiverState>>,
+    active_rx_streams: Shared<AtomicUsize>,
+    cleanup_needed: Shared<AtomicBool>,
 }
 
 /// HydraSDR RFOne asynchronous receive streamer.
@@ -37,9 +36,9 @@ pub struct AsyncHydraSdr {
 /// available for cleanup by the next asynchronous device or stream operation.
 #[must_use = "deactivate the HydraSDR stream before dropping it"]
 pub struct AsyncHydraSdrRxStreamer {
-    session: Arc<AsyncMutex<AsyncHydraSession>>,
-    active_rx_streams: Arc<AtomicUsize>,
-    cleanup_needed: Arc<AtomicBool>,
+    session: Shared<AsyncMutex<AsyncHydraSession>>,
+    active_rx_streams: Shared<AtomicUsize>,
+    cleanup_needed: Shared<AtomicBool>,
     iq_scratch: Vec<(f32, f32)>,
     active: bool,
 }
@@ -67,8 +66,8 @@ impl AsyncHydraSession {
 
     async fn set_frequency_hz(&mut self, frequency_hz: u64) -> Result<(), Error> {
         match self {
-            Self::Device(device) => device.set_frequency_hz_async(frequency_hz).await,
-            Self::Stream(stream) => stream.set_frequency_hz_async(frequency_hz).await,
+            Self::Device(device) => device.set_frequency_hz(frequency_hz).await,
+            Self::Stream(stream) => stream.set_frequency_hz(frequency_hz).await,
             Self::Disconnected => return Err(Error::DeviceDisconnected),
         }
         .map_err(map_hydrasdr_error)
@@ -76,8 +75,8 @@ impl AsyncHydraSession {
 
     async fn set_sample_rate_hz(&mut self, sample_rate_hz: u32) -> Result<(), Error> {
         match self {
-            Self::Device(device) => device.set_sample_rate_hz_async(sample_rate_hz).await,
-            Self::Stream(stream) => stream.set_sample_rate_hz_async(sample_rate_hz).await,
+            Self::Device(device) => device.set_sample_rate_hz(sample_rate_hz).await,
+            Self::Stream(stream) => stream.set_sample_rate_hz(sample_rate_hz).await,
             Self::Disconnected => return Err(Error::DeviceDisconnected),
         }
         .map_err(map_hydrasdr_error)
@@ -85,8 +84,8 @@ impl AsyncHydraSession {
 
     async fn set_bandwidth_hz(&mut self, bandwidth_hz: u32) -> Result<(), Error> {
         match self {
-            Self::Device(device) => device.set_bandwidth_hz_async(bandwidth_hz).await,
-            Self::Stream(stream) => stream.set_bandwidth_hz_async(bandwidth_hz).await,
+            Self::Device(device) => device.set_bandwidth_hz(bandwidth_hz).await,
+            Self::Stream(stream) => stream.set_bandwidth_hz(bandwidth_hz).await,
             Self::Disconnected => return Err(Error::DeviceDisconnected),
         }
         .map_err(map_hydrasdr_error)
@@ -94,8 +93,8 @@ impl AsyncHydraSession {
 
     async fn set_rf_port(&mut self, port: RfPort) -> Result<(), Error> {
         match self {
-            Self::Device(device) => device.set_rf_port_async(port).await,
-            Self::Stream(stream) => stream.set_rf_port_async(port).await,
+            Self::Device(device) => device.set_rf_port(port).await,
+            Self::Stream(stream) => stream.set_rf_port(port).await,
             Self::Disconnected => return Err(Error::DeviceDisconnected),
         }
         .map_err(map_hydrasdr_error)
@@ -103,8 +102,8 @@ impl AsyncHydraSession {
 
     async fn set_gain(&mut self, gain: GainConfig) -> Result<(), Error> {
         match self {
-            Self::Device(device) => device.set_gain_async(gain).await,
-            Self::Stream(stream) => stream.set_gain_async(gain).await,
+            Self::Device(device) => device.set_gain(gain).await,
+            Self::Stream(stream) => stream.set_gain(gain).await,
             Self::Disconnected => return Err(Error::DeviceDisconnected),
         }
         .map_err(map_hydrasdr_error)
@@ -112,22 +111,22 @@ impl AsyncHydraSession {
 }
 
 struct ActivationClaim {
-    active_rx_streams: Arc<AtomicUsize>,
-    cleanup_needed: Arc<AtomicBool>,
+    active_rx_streams: Shared<AtomicUsize>,
+    cleanup_needed: Shared<AtomicBool>,
     committed: bool,
 }
 
 impl ActivationClaim {
     fn acquire(
-        active_rx_streams: &Arc<AtomicUsize>,
-        cleanup_needed: &Arc<AtomicBool>,
+        active_rx_streams: &Shared<AtomicUsize>,
+        cleanup_needed: &Shared<AtomicBool>,
     ) -> Result<Self, Error> {
         active_rx_streams
             .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| Error::Busy)?;
         Ok(Self {
-            active_rx_streams: Arc::clone(active_rx_streams),
-            cleanup_needed: Arc::clone(cleanup_needed),
+            active_rx_streams: Shared::clone(active_rx_streams),
+            cleanup_needed: Shared::clone(cleanup_needed),
             committed: false,
         })
     }
@@ -159,14 +158,12 @@ async fn cleanup_abandoned_session(
     cleanup_needed.store(false, Ordering::SeqCst);
     Ok(())
 }
+
 impl AsyncHydraSdr {
     /// Return descriptors for detected HydraSDR RFOne devices asynchronously.
     pub async fn probe(_args: &Args) -> Result<Vec<Args>, Error> {
         let mut devs = Vec::new();
-        for dev in HydraSdrDevice::list_async()
-            .await
-            .map_err(map_hydrasdr_error)?
-        {
+        for dev in HydraSdrDevice::list().await.map_err(map_hydrasdr_error)? {
             devs.push(probe_args_from_info(dev));
         }
         Ok(devs)
@@ -179,16 +176,16 @@ impl AsyncHydraSdr {
             .map_err(|_| Error::invalid_argument("args", "failed to convert args"))?;
         let selector = device_selector(&args)?;
         let (mut dev, serial) = open_selected_device_async(selector).await?;
-        let sample_rates = dev.sample_rates_async().await.unwrap_or_default();
-        let bandwidths = dev.bandwidths_async().await.unwrap_or_default();
+        let sample_rates = dev.sample_rates().await.map_err(map_hydrasdr_error)?;
+        let bandwidths = dev.bandwidths().await.unwrap_or_default();
         let receiver_state = ReceiverState::from_device_info(dev.info(), sample_rates, bandwidths);
 
         Ok(Self {
-            session: Arc::new(AsyncMutex::new(AsyncHydraSession::Device(Box::new(dev)))),
+            session: Shared::new(AsyncMutex::new(AsyncHydraSession::Device(Box::new(dev)))),
             serial,
-            inner: Arc::new(AsyncMutex::new(receiver_state)),
-            active_rx_streams: Arc::new(AtomicUsize::new(0)),
-            cleanup_needed: Arc::new(AtomicBool::new(false)),
+            inner: Shared::new(AsyncMutex::new(receiver_state)),
+            active_rx_streams: Shared::new(AtomicUsize::new(0)),
+            cleanup_needed: Shared::new(AtomicBool::new(false)),
         })
     }
 
@@ -614,20 +611,7 @@ impl AsyncHydraSdr {
     ) -> Result<Range, Error> {
         check_rx(direction, channel)?;
         let inner = self.inner.lock().await;
-        if inner.bandwidths.is_empty() {
-            Ok(Range::new(vec![RangeItem::Interval(
-                DEFAULT_BANDWIDTH_MIN,
-                u32::MAX as f64,
-            )]))
-        } else {
-            Ok(Range::new(
-                inner
-                    .bandwidths
-                    .iter()
-                    .map(|bandwidth| RangeItem::Value(*bandwidth as f64))
-                    .collect(),
-            ))
-        }
+        bandwidth_range(&inner.bandwidths)
     }
 }
 
@@ -673,9 +657,9 @@ impl AsyncRxDevice for AsyncHydraSdr {
         }
         self.ensure_rx_config_idle()?;
         Ok(AsyncHydraSdrRxStreamer::new(
-            Arc::clone(&self.session),
-            Arc::clone(&self.active_rx_streams),
-            Arc::clone(&self.cleanup_needed),
+            Shared::clone(&self.session),
+            Shared::clone(&self.active_rx_streams),
+            Shared::clone(&self.cleanup_needed),
         ))
     }
 }
@@ -889,9 +873,9 @@ impl AsyncBandwidthControl for AsyncHydraSdr {
 
 impl AsyncHydraSdrRxStreamer {
     fn new(
-        session: Arc<AsyncMutex<AsyncHydraSession>>,
-        active_rx_streams: Arc<AtomicUsize>,
-        cleanup_needed: Arc<AtomicBool>,
+        session: Shared<AsyncMutex<AsyncHydraSession>>,
+        active_rx_streams: Shared<AtomicUsize>,
+        cleanup_needed: Shared<AtomicBool>,
     ) -> Self {
         Self {
             session,
@@ -1044,7 +1028,7 @@ async fn open_selected_device_async(
         DeviceSelector::First => HydraSdrDevice::builder()
             .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
-            .open_async()
+            .open()
             .await
             .map(|dev| {
                 let serial = dev.info().serial;
@@ -1055,14 +1039,12 @@ async fn open_selected_device_async(
             .serial(serial)
             .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
-            .open_async()
+            .open()
             .await
             .map(|dev| (dev, Some(serial)))
             .map_err(map_hydrasdr_error),
         DeviceSelector::Index(index) => {
-            let devices = HydraSdrDevice::list_async()
-                .await
-                .map_err(map_hydrasdr_error)?;
+            let devices = HydraSdrDevice::list().await.map_err(map_hydrasdr_error)?;
             let Some(info) = devices.get(index) else {
                 return Err(Error::DeviceNotFound);
             };
@@ -1071,7 +1053,7 @@ async fn open_selected_device_async(
                     .serial(serial)
                     .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
-                    .open_async()
+                    .open()
                     .await
                     .map(|dev| (dev, Some(serial)))
                     .map_err(map_hydrasdr_error)
@@ -1079,7 +1061,7 @@ async fn open_selected_device_async(
                 HydraSdrDevice::builder()
                     .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
-                    .open_async()
+                    .open()
                     .await
                     .map(|dev| {
                         let serial = dev.info().serial;
@@ -1100,8 +1082,8 @@ mod tests {
     #[cfg(any(feature = "smol", feature = "tokio"))]
     #[test]
     fn canceled_async_activation_releases_claim_and_requests_cleanup() {
-        let active = Arc::new(AtomicUsize::new(0));
-        let cleanup = Arc::new(AtomicBool::new(false));
+        let active = Shared::new(AtomicUsize::new(0));
+        let cleanup = Shared::new(AtomicBool::new(false));
 
         let claim = ActivationClaim::acquire(&active, &cleanup).expect("acquire stream claim");
         assert_eq!(active.load(Ordering::SeqCst), 1);
@@ -1114,8 +1096,8 @@ mod tests {
     #[cfg(any(feature = "smol", feature = "tokio"))]
     #[test]
     fn committed_async_activation_keeps_exclusive_claim() {
-        let active = Arc::new(AtomicUsize::new(0));
-        let cleanup = Arc::new(AtomicBool::new(false));
+        let active = Shared::new(AtomicUsize::new(0));
+        let cleanup = Shared::new(AtomicBool::new(false));
 
         let claim = ActivationClaim::acquire(&active, &cleanup).expect("acquire stream claim");
         claim.commit();

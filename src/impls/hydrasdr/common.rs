@@ -5,7 +5,6 @@ use crate::{Args, Capability, Direction, Error, Range, RangeItem};
 
 pub(super) const MTU: usize = 262_144 / 8;
 pub(super) const DEFAULT_SAMPLE_RATE_MIN: f64 = 10_000.0;
-pub(super) const DEFAULT_BANDWIDTH_MIN: f64 = 1_000.0;
 #[derive(Clone)]
 pub(super) struct ReceiverState {
     pub(super) antenna: &'static str,
@@ -19,6 +18,19 @@ pub(super) struct ReceiverState {
     pub(super) agc: bool,
     pub(super) min_frequency: f64,
     pub(super) max_frequency: f64,
+}
+
+pub(super) fn bandwidth_range(bandwidths: &[u32]) -> Result<Range, Error> {
+    if bandwidths.is_empty() {
+        return Err(Error::unsupported(Capability::Bandwidth));
+    }
+
+    Ok(Range::new(
+        bandwidths
+            .iter()
+            .map(|bandwidth| RangeItem::Value(*bandwidth as f64))
+            .collect(),
+    ))
 }
 
 impl ReceiverState {
@@ -201,6 +213,19 @@ pub(super) fn map_hydrasdr_error(err: hydrasdr_rs::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_bandwidth_list_is_unsupported() {
+        assert!(bandwidth_range(&[]).unwrap_err().is_unsupported());
+    }
+
+    #[test]
+    fn bandwidth_range_contains_reported_values_only() {
+        let range = bandwidth_range(&[1_750_000, 2_500_000]).unwrap();
+        assert!(range.contains(1_750_000.0));
+        assert!(range.contains(2_500_000.0));
+        assert!(!range.contains(2_000_000.0));
+    }
 
     #[test]
     fn probe_args_from_info_maps_usb_metadata_without_opening_hardware() {
