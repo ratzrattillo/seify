@@ -40,9 +40,6 @@ pub struct HydraSdr {
     inner: Arc<Mutex<Inner>>,
 }
 
-unsafe impl Send for HydraSdr {}
-unsafe impl Sync for HydraSdr {}
-
 /// Asynchronous HydraSDR RFOne device backend.
 #[cfg(any(feature = "smol", feature = "tokio"))]
 #[derive(Clone)]
@@ -53,11 +50,6 @@ pub struct AsyncHydraSdr {
     active_rx_streams: Arc<AtomicUsize>,
 }
 
-#[cfg(any(feature = "smol", feature = "tokio"))]
-unsafe impl Send for AsyncHydraSdr {}
-#[cfg(any(feature = "smol", feature = "tokio"))]
-unsafe impl Sync for AsyncHydraSdr {}
-
 /// HydraSDR RFOne asynchronous receive streamer.
 #[cfg(any(feature = "smol", feature = "tokio"))]
 pub struct AsyncHydraSdrRxStreamer {
@@ -66,9 +58,6 @@ pub struct AsyncHydraSdrRxStreamer {
     stream: Option<AsyncF32RxStream>,
     active: bool,
 }
-
-#[cfg(any(feature = "smol", feature = "tokio"))]
-unsafe impl Send for AsyncHydraSdrRxStreamer {}
 
 #[derive(Clone)]
 struct Inner {
@@ -117,11 +106,8 @@ pub struct RxStreamer {
     active: bool,
 }
 
-unsafe impl Send for RxStreamer {}
-
 /// Placeholder transmit streamer for unsupported TX operations.
 pub struct TxDummy;
-unsafe impl Send for TxDummy {}
 
 impl HydraSdr {
     /// Return descriptors for detected HydraSDR RFOne devices.
