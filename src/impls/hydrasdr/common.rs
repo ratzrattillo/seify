@@ -6,7 +6,6 @@ use crate::Direction::*;
 use crate::{Args, Capability, Direction, Error, Range, RangeItem};
 
 pub(super) const F32_RX_MTU: usize = hydrasdr_rs::MAX_F32_IQ_SAMPLES_PER_TRANSFER;
-#[derive(Clone)]
 pub(super) struct ReceiverState {
     pub(super) antenna: &'static str,
     pub(super) frequency: Option<f64>,
@@ -97,7 +96,6 @@ impl ReceiverState {
     }
 }
 
-#[derive(Clone)]
 pub(super) struct GainCache {
     pub(super) name: &'static str,
     pub(super) gain_type: GainType,
