@@ -20,7 +20,7 @@ use crate::{
 pub struct HydraSdr {
     dev: Arc<Mutex<Option<HydraSdrDevice>>>,
     serial: Option<u64>,
-    inner: Arc<Mutex<Inner>>,
+    inner: Arc<Mutex<ReceiverState>>,
     active_rx_streams: Arc<AtomicUsize>,
 }
 /// HydraSDR RFOne receive streamer.
@@ -52,35 +52,12 @@ impl HydraSdr {
         let (mut dev, serial) = open_selected_device(selector)?;
         let sample_rates = dev.sample_rates().unwrap_or_default();
         let bandwidths = dev.bandwidths().unwrap_or_default();
-        let info = dev.info().clone();
-        let current_config = info.current_config.as_ref();
-        let gains = default_gain_cache();
-        let min_frequency = info.min_frequency as f64;
-        let max_frequency = info.max_frequency as f64;
+        let receiver_state = ReceiverState::from_device_info(dev.info(), sample_rates, bandwidths);
 
         Ok(Self {
             dev: Arc::new(Mutex::new(Some(dev))),
             serial,
-            inner: Arc::new(Mutex::new(Inner {
-                antenna: "ANT",
-                frequency: current_config.map(|config| config.frequency_hz() as f64),
-                sample_rate: current_config
-                    .map(|config| config.sample_rate_hz() as f64)
-                    .or_else(|| sample_rates.first().map(|rate| *rate as f64)),
-                bandwidth: current_config
-                    .and_then(|config| match config.bandwidth() {
-                        Bandwidth::Auto => None,
-                        Bandwidth::ManualHz(bandwidth) => Some(bandwidth as f64),
-                    })
-                    .or_else(|| bandwidths.first().map(|bandwidth| *bandwidth as f64)),
-                sample_rates,
-                bandwidths,
-                gains,
-                gain_config: GainConfig::Unchanged,
-                agc: false,
-                min_frequency,
-                max_frequency,
-            })),
+            inner: Arc::new(Mutex::new(receiver_state)),
             active_rx_streams: Arc::new(AtomicUsize::new(0)),
         })
     }
@@ -895,7 +872,7 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
     }
 }
 
-fn configure_device(dev: &mut HydraSdrDevice, inner: &Inner) -> Result<(), Error> {
+fn configure_device(dev: &mut HydraSdrDevice, inner: &ReceiverState) -> Result<(), Error> {
     let (_, port) = antenna_port(inner.antenna).ok_or(Error::invalid_argument(
         "hydrasdr",
         "invalid HydraSDR argument",

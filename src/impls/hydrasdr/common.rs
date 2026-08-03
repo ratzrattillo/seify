@@ -1,4 +1,4 @@
-use hydrasdr_rs::{DeviceDescriptor, ErrorKind, GainConfig, RfPort};
+use hydrasdr_rs::{Bandwidth, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, RfPort};
 
 use crate::Direction::*;
 use crate::{Args, Capability, Direction, Error, Range, RangeItem};
@@ -7,7 +7,7 @@ pub(super) const MTU: usize = 262_144 / 8;
 pub(super) const DEFAULT_SAMPLE_RATE_MIN: f64 = 10_000.0;
 pub(super) const DEFAULT_BANDWIDTH_MIN: f64 = 1_000.0;
 #[derive(Clone)]
-pub(super) struct Inner {
+pub(super) struct ReceiverState {
     pub(super) antenna: &'static str,
     pub(super) frequency: Option<f64>,
     pub(super) sample_rate: Option<f64>,
@@ -19,6 +19,36 @@ pub(super) struct Inner {
     pub(super) agc: bool,
     pub(super) min_frequency: f64,
     pub(super) max_frequency: f64,
+}
+
+impl ReceiverState {
+    pub(super) fn from_device_info(
+        info: &DeviceInfo,
+        sample_rates: Vec<u32>,
+        bandwidths: Vec<u32>,
+    ) -> Self {
+        let current_config = info.current_config.as_ref();
+        Self {
+            antenna: "ANT",
+            frequency: current_config.map(|config| config.frequency_hz() as f64),
+            sample_rate: current_config
+                .map(|config| config.sample_rate_hz() as f64)
+                .or_else(|| sample_rates.first().map(|rate| *rate as f64)),
+            bandwidth: current_config
+                .and_then(|config| match config.bandwidth() {
+                    Bandwidth::Auto => None,
+                    Bandwidth::ManualHz(bandwidth) => Some(bandwidth as f64),
+                })
+                .or_else(|| bandwidths.first().map(|bandwidth| *bandwidth as f64)),
+            sample_rates,
+            bandwidths,
+            gains: default_gain_cache(),
+            gain_config: GainConfig::Unchanged,
+            agc: false,
+            min_frequency: info.min_frequency as f64,
+            max_frequency: info.max_frequency as f64,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -118,7 +148,7 @@ pub(super) fn device_selector(args: &Args) -> Result<DeviceSelector, Error> {
         Err(err) => Err(err),
     }
 }
-pub(super) fn manual_gain_config(inner: &Inner) -> GainConfig {
+pub(super) fn manual_gain_config(inner: &ReceiverState) -> GainConfig {
     GainConfig::Manual {
         lna: cached_gain_value(inner, GainType::Lna),
         mixer: cached_gain_value(inner, GainType::Mixer),
@@ -128,7 +158,7 @@ pub(super) fn manual_gain_config(inner: &Inner) -> GainConfig {
     }
 }
 
-pub(super) fn cached_gain_value(inner: &Inner, gain_type: GainType) -> Option<u8> {
+pub(super) fn cached_gain_value(inner: &ReceiverState, gain_type: GainType) -> Option<u8> {
     inner
         .gains
         .iter()
