@@ -132,8 +132,14 @@ mod web {
     }
 
     async fn open_device() -> UiResult<OpenedDevice> {
-        let device = AsyncRegistry::default()
-            .open_args(Args::new())
+        let registry = AsyncRegistry::default();
+        let args = Args::new();
+        registry
+            .request_permission(args.clone())
+            .await
+            .map_err(|error| error.to_string())?;
+        let device = registry
+            .open_args(args)
             .await
             .map_err(|error| error.to_string())?;
         let capabilities = device
