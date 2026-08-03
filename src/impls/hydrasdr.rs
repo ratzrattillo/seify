@@ -1,7 +1,7 @@
 //! HydraSDR RFOne driver.
 
 #[cfg(any(feature = "smol", feature = "tokio"))]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -44,20 +44,121 @@ pub struct HydraSdr {
 #[cfg(any(feature = "smol", feature = "tokio"))]
 #[derive(Clone)]
 pub struct AsyncHydraSdr {
-    dev: Arc<AsyncMutex<Option<HydraSdrDevice>>>,
+    session: Arc<AsyncMutex<AsyncHydraSession>>,
     serial: Option<u64>,
     inner: Arc<AsyncMutex<Inner>>,
     active_rx_streams: Arc<AtomicUsize>,
+    cleanup_needed: Arc<AtomicBool>,
 }
 
 /// HydraSDR RFOne asynchronous receive streamer.
 #[cfg(any(feature = "smol", feature = "tokio"))]
 pub struct AsyncHydraSdrRxStreamer {
-    dev: Arc<AsyncMutex<Option<HydraSdrDevice>>>,
+    session: Arc<AsyncMutex<AsyncHydraSession>>,
     active_rx_streams: Arc<AtomicUsize>,
-    stream: Option<AsyncF32RxStream>,
+    cleanup_needed: Arc<AtomicBool>,
     iq_scratch: Vec<(f32, f32)>,
     active: bool,
+}
+
+#[cfg(any(feature = "smol", feature = "tokio"))]
+enum AsyncHydraSession {
+    Device(Box<HydraSdrDevice>),
+    Stream(Box<AsyncF32RxStream>),
+    Disconnected,
+}
+
+#[cfg(any(feature = "smol", feature = "tokio"))]
+impl AsyncHydraSession {
+    fn ensure_stream(&mut self) -> Result<&mut AsyncF32RxStream, Error> {
+        if matches!(self, Self::Device(_)) {
+            let Self::Device(device) = std::mem::replace(self, Self::Disconnected) else {
+                unreachable!();
+            };
+            *self = Self::Stream(Box::new((*device).into_async_f32_rx_stream()));
+        }
+        match self {
+            Self::Stream(stream) => Ok(stream),
+            Self::Disconnected => Err(Error::DeviceDisconnected),
+            Self::Device(_) => unreachable!(),
+        }
+    }
+
+    fn device_mut(&mut self) -> Result<&mut HydraSdrDevice, Error> {
+        if matches!(self, Self::Stream(_)) {
+            let Self::Stream(stream) = std::mem::replace(self, Self::Disconnected) else {
+                unreachable!();
+            };
+            *self = Self::Device(Box::new((*stream).into_device()));
+        }
+        match self {
+            Self::Device(device) => Ok(device),
+            Self::Disconnected => Err(Error::DeviceDisconnected),
+            Self::Stream(_) => unreachable!(),
+        }
+    }
+}
+
+#[cfg(any(feature = "smol", feature = "tokio"))]
+struct ActivationClaim {
+    active_rx_streams: Arc<AtomicUsize>,
+    cleanup_needed: Arc<AtomicBool>,
+    committed: bool,
+}
+
+#[cfg(any(feature = "smol", feature = "tokio"))]
+impl ActivationClaim {
+    fn acquire(
+        active_rx_streams: &Arc<AtomicUsize>,
+        cleanup_needed: &Arc<AtomicBool>,
+    ) -> Result<Self, Error> {
+        active_rx_streams
+            .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+            .map_err(|_| Error::Busy)?;
+        Ok(Self {
+            active_rx_streams: Arc::clone(active_rx_streams),
+            cleanup_needed: Arc::clone(cleanup_needed),
+            committed: false,
+        })
+    }
+
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+#[cfg(any(feature = "smol", feature = "tokio"))]
+impl Drop for ActivationClaim {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.cleanup_needed.store(true, Ordering::SeqCst);
+            self.active_rx_streams.store(0, Ordering::SeqCst);
+        }
+    }
+}
+
+#[cfg(any(feature = "smol", feature = "tokio"))]
+async fn cleanup_abandoned_session(
+    session: &mut AsyncHydraSession,
+    cleanup_needed: &AtomicBool,
+) -> Result<(), Error> {
+    if !cleanup_needed.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    if let AsyncHydraSession::Stream(stream) = session {
+        stream.finish().await.map_err(map_hydrasdr_error)?;
+    }
+    cleanup_needed.store(false, Ordering::SeqCst);
+    Ok(())
+}
+
+#[cfg(any(feature = "smol", feature = "tokio"))]
+async fn prepare_session_device<'a>(
+    session: &'a mut AsyncHydraSession,
+    cleanup_needed: &AtomicBool,
+) -> Result<&'a mut HydraSdrDevice, Error> {
+    cleanup_abandoned_session(session, cleanup_needed).await?;
+    session.device_mut()
 }
 
 #[derive(Clone)]
@@ -201,7 +302,7 @@ impl AsyncHydraSdr {
         let max_frequency = info.max_frequency as f64;
 
         Ok(Self {
-            dev: Arc::new(AsyncMutex::new(Some(dev))),
+            session: Arc::new(AsyncMutex::new(AsyncHydraSession::Device(Box::new(dev)))),
             serial,
             inner: Arc::new(AsyncMutex::new(Inner {
                 antenna: "ANT",
@@ -225,6 +326,7 @@ impl AsyncHydraSdr {
                 max_frequency,
             })),
             active_rx_streams: Arc::new(AtomicUsize::new(0)),
+            cleanup_needed: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -674,14 +776,7 @@ impl AsyncHydraSdr {
     }
 
     async fn id(&self) -> Result<String, Error> {
-        if let Some(serial) = self.serial {
-            return Ok(serial.to_string());
-        }
-
-        let dev = self.dev.lock().await;
-        let dev = dev.as_ref().ok_or(Error::DeviceDisconnected)?;
-        dev.info()
-            .serial
+        self.serial
             .map(|serial| serial.to_string())
             .ok_or_else(|| Error::unsupported(Capability::DeviceId))
     }
@@ -732,10 +827,13 @@ impl AsyncHydraSdr {
         let mut inner = self.inner.lock().await;
         let old = inner.antenna;
         inner.antenna = name;
-        let mut dev = self.dev.lock().await;
-        let Some(dev) = dev.as_mut() else {
-            inner.antenna = old;
-            return Err(Error::DeviceDisconnected);
+        let mut session = self.session.lock().await;
+        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
+            Ok(dev) => dev,
+            Err(err) => {
+                inner.antenna = old;
+                return Err(err);
+            }
         };
         if let Err(err) = configure_device_async(dev, &inner).await {
             inner.antenna = old;
@@ -762,11 +860,14 @@ impl AsyncHydraSdr {
         let old_gain_config = inner.gain_config;
         inner.agc = agc;
         inner.gain_config = manual_gain_config(&inner);
-        let mut dev = self.dev.lock().await;
-        let Some(dev) = dev.as_mut() else {
-            inner.agc = old_agc;
-            inner.gain_config = old_gain_config;
-            return Err(Error::DeviceDisconnected);
+        let mut session = self.session.lock().await;
+        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
+            Ok(dev) => dev,
+            Err(err) => {
+                inner.agc = old_agc;
+                inner.gain_config = old_gain_config;
+                return Err(err);
+            }
         };
         if let Err(err) = configure_device_async(dev, &inner).await {
             inner.agc = old_agc;
@@ -846,11 +947,14 @@ impl AsyncHydraSdr {
             }
             GainType::Lna | GainType::Mixer | GainType::Vga => manual_gain_config(&inner),
         };
-        let mut dev = self.dev.lock().await;
-        let Some(dev) = dev.as_mut() else {
-            inner.gains = old_gains;
-            inner.gain_config = old_gain_config;
-            return Err(Error::DeviceDisconnected);
+        let mut session = self.session.lock().await;
+        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
+            Ok(dev) => dev,
+            Err(err) => {
+                inner.gains = old_gains;
+                inner.gain_config = old_gain_config;
+                return Err(err);
+            }
         };
         if let Err(err) = configure_device_async(dev, &inner).await {
             inner.gains = old_gains;
@@ -999,10 +1103,13 @@ impl AsyncHydraSdr {
         let mut inner = self.inner.lock().await;
         let old = inner.frequency;
         inner.frequency = Some(frequency);
-        let mut dev = self.dev.lock().await;
-        let Some(dev) = dev.as_mut() else {
-            inner.frequency = old;
-            return Err(Error::DeviceDisconnected);
+        let mut session = self.session.lock().await;
+        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
+            Ok(dev) => dev,
+            Err(err) => {
+                inner.frequency = old;
+                return Err(err);
+            }
         };
         if let Err(err) = configure_device_async(dev, &inner).await {
             inner.frequency = old;
@@ -1034,10 +1141,13 @@ impl AsyncHydraSdr {
         let mut inner = self.inner.lock().await;
         let old = inner.sample_rate;
         inner.sample_rate = Some(rate);
-        let mut dev = self.dev.lock().await;
-        let Some(dev) = dev.as_mut() else {
-            inner.sample_rate = old;
-            return Err(Error::DeviceDisconnected);
+        let mut session = self.session.lock().await;
+        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
+            Ok(dev) => dev,
+            Err(err) => {
+                inner.sample_rate = old;
+                return Err(err);
+            }
         };
         if let Err(err) = configure_device_async(dev, &inner).await {
             inner.sample_rate = old;
@@ -1092,10 +1202,13 @@ impl AsyncHydraSdr {
         let mut inner = self.inner.lock().await;
         let old = inner.bandwidth;
         inner.bandwidth = Some(bw);
-        let mut dev = self.dev.lock().await;
-        let Some(dev) = dev.as_mut() else {
-            inner.bandwidth = old;
-            return Err(Error::DeviceDisconnected);
+        let mut session = self.session.lock().await;
+        let dev = match prepare_session_device(&mut session, &self.cleanup_needed).await {
+            Ok(dev) => dev,
+            Err(err) => {
+                inner.bandwidth = old;
+                return Err(err);
+            }
         };
         if let Err(err) = configure_device_async(dev, &inner).await {
             inner.bandwidth = old;
@@ -1386,8 +1499,9 @@ impl AsyncRxDevice for AsyncHydraSdr {
         }
         self.ensure_rx_config_idle()?;
         Ok(AsyncHydraSdrRxStreamer::new(
-            Arc::clone(&self.dev),
+            Arc::clone(&self.session),
             Arc::clone(&self.active_rx_streams),
+            Arc::clone(&self.cleanup_needed),
         ))
     }
 }
@@ -1618,13 +1732,14 @@ impl RxStreamer {
 #[cfg(any(feature = "smol", feature = "tokio"))]
 impl AsyncHydraSdrRxStreamer {
     fn new(
-        dev: Arc<AsyncMutex<Option<HydraSdrDevice>>>,
+        session: Arc<AsyncMutex<AsyncHydraSession>>,
         active_rx_streams: Arc<AtomicUsize>,
+        cleanup_needed: Arc<AtomicBool>,
     ) -> Self {
         Self {
-            dev,
+            session,
             active_rx_streams,
-            stream: None,
+            cleanup_needed,
             iq_scratch: Vec::new(),
             active: false,
         }
@@ -1644,35 +1759,17 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         if self.active {
             return Ok(());
         }
-        if self.stream.is_none() {
-            let mut dev = self.dev.lock().await;
-            let device = match dev.take() {
-                Some(device) => device,
-                None if self.active_rx_streams.load(Ordering::SeqCst) != 0 => {
-                    return Err(Error::Busy);
-                }
-                None => return Err(Error::DeviceDisconnected),
-            };
-            self.active_rx_streams.fetch_add(1, Ordering::SeqCst);
-            self.stream = Some(device.into_async_f32_rx_stream());
-        }
-        let start_result = self
-            .stream
-            .as_mut()
-            .expect("owned HydraSDR stream is present")
+        let claim = ActivationClaim::acquire(&self.active_rx_streams, &self.cleanup_needed)?;
+        let mut session = self.session.lock().await;
+        cleanup_abandoned_session(&mut session, &self.cleanup_needed).await?;
+        session
+            .ensure_stream()?
             .start()
-            .await;
-        if let Err(error) = start_result {
-            let mut dev = self.dev.lock().await;
-            let stream = self
-                .stream
-                .take()
-                .expect("owned HydraSDR stream is present");
-            *dev = Some(stream.into_device());
-            self.active_rx_streams.fetch_sub(1, Ordering::SeqCst);
-            return Err(map_hydrasdr_error(error));
-        }
+            .await
+            .map_err(map_hydrasdr_error)?;
+        self.cleanup_needed.store(false, Ordering::SeqCst);
         self.active = true;
+        claim.commit();
         Ok(())
     }
 
@@ -1680,18 +1777,17 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         if time_ns.is_some() {
             return Err(Error::unsupported(Capability::TimedDeactivation));
         }
-        if let Some(stream) = self.stream.as_mut() {
-            let finish_result = stream.finish().await.map_err(map_hydrasdr_error);
-            let mut dev = self.dev.lock().await;
-            let stream = self
-                .stream
-                .take()
-                .expect("owned HydraSDR stream is present");
-            *dev = Some(stream.into_device());
-            self.active_rx_streams.fetch_sub(1, Ordering::SeqCst);
-            self.active = false;
-            finish_result?;
+        if !self.active {
+            return Ok(());
         }
+        let mut session = self.session.lock().await;
+        let AsyncHydraSession::Stream(stream) = &mut *session else {
+            return Err(Error::DeviceDisconnected);
+        };
+        stream.finish().await.map_err(map_hydrasdr_error)?;
+        self.cleanup_needed.store(false, Ordering::SeqCst);
+        self.active_rx_streams.store(0, Ordering::SeqCst);
+        self.active = false;
         Ok(())
     }
 
@@ -1709,7 +1805,10 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         }
 
         let out = &mut buffers[0];
-        let stream = self.stream.as_mut().ok_or(Error::DeviceDisconnected)?;
+        let mut session = self.session.lock().await;
+        let AsyncHydraSession::Stream(stream) = &mut *session else {
+            return Err(Error::DeviceDisconnected);
+        };
         // One MTU maps to one HydraSDR USB completion; keeping this read to one
         // completion makes timing out the wait cancellation-safe.
         let read_len = out.len().min(MTU);
@@ -1729,8 +1828,9 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
 #[cfg(any(feature = "smol", feature = "tokio"))]
 impl Drop for AsyncHydraSdrRxStreamer {
     fn drop(&mut self) {
-        if self.stream.is_some() {
-            self.active_rx_streams.fetch_sub(1, Ordering::SeqCst);
+        if self.active {
+            self.cleanup_needed.store(true, Ordering::SeqCst);
+            self.active_rx_streams.store(0, Ordering::SeqCst);
         }
         self.active = false;
     }
@@ -2148,6 +2248,37 @@ fn map_hydrasdr_error(err: hydrasdr_rs::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(feature = "smol", feature = "tokio"))]
+    #[test]
+    fn canceled_async_activation_releases_claim_and_requests_cleanup() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let cleanup = Arc::new(AtomicBool::new(false));
+
+        let claim = ActivationClaim::acquire(&active, &cleanup).expect("acquire stream claim");
+        assert_eq!(active.load(Ordering::SeqCst), 1);
+        drop(claim);
+
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert!(cleanup.load(Ordering::SeqCst));
+    }
+
+    #[cfg(any(feature = "smol", feature = "tokio"))]
+    #[test]
+    fn committed_async_activation_keeps_exclusive_claim() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let cleanup = Arc::new(AtomicBool::new(false));
+
+        let claim = ActivationClaim::acquire(&active, &cleanup).expect("acquire stream claim");
+        claim.commit();
+
+        assert_eq!(active.load(Ordering::SeqCst), 1);
+        assert!(!cleanup.load(Ordering::SeqCst));
+        assert!(matches!(
+            ActivationClaim::acquire(&active, &cleanup),
+            Err(Error::Busy)
+        ));
+    }
 
     #[test]
     fn probe_args_from_info_maps_usb_metadata_without_opening_hardware() {
