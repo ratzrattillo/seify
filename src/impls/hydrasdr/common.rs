@@ -1,4 +1,6 @@
-use hydrasdr_rs::{Bandwidth, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, RfPort};
+use hydrasdr_rs::{
+    Bandwidth, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, GainPreset, RfPort,
+};
 
 use crate::Direction::*;
 use crate::{Args, Capability, Direction, Error, Range, RangeItem};
@@ -67,6 +69,53 @@ impl ReceiverState {
             max_frequency: info.max_frequency as f64,
         }
     }
+
+    pub(super) fn set_agc_cached(&mut self, agc: bool) {
+        self.agc = agc;
+        self.gain_config = self.manual_gain_config();
+    }
+
+    pub(super) fn set_gain_cached(&mut self, gain_type: GainType, value: f64, update: GainConfig) {
+        if let Some(cached) = self
+            .gains
+            .iter_mut()
+            .find(|cached| cached.gain_type == gain_type)
+        {
+            cached.value = value;
+        }
+        self.gain_config = match gain_type {
+            GainType::Linearity | GainType::Sensitivity => update,
+            GainType::Lna | GainType::Mixer | GainType::Vga => self.manual_gain_config(),
+        };
+    }
+
+    pub(super) fn gain_value(&self, gain_type: GainType) -> Option<f64> {
+        self.gains
+            .iter()
+            .find(|cached| cached.gain_type == gain_type)
+            .map(|cached| cached.value)
+    }
+
+    pub(super) fn gain_range(&self, gain_type: GainType) -> Option<Range> {
+        self.gains
+            .iter()
+            .find(|cached| cached.gain_type == gain_type)
+            .map(|cached| cached.range.clone())
+    }
+
+    fn manual_gain_config(&self) -> GainConfig {
+        GainConfig::Manual {
+            lna: self.cached_gain_value(GainType::Lna),
+            mixer: self.cached_gain_value(GainType::Mixer),
+            vga: self.cached_gain_value(GainType::Vga),
+            lna_agc: Some(self.agc),
+            mixer_agc: Some(self.agc),
+        }
+    }
+
+    fn cached_gain_value(&self, gain_type: GainType) -> Option<u8> {
+        self.gain_value(gain_type).map(|gain| gain.round() as u8)
+    }
 }
 
 #[derive(Clone)]
@@ -84,6 +133,37 @@ pub(super) enum GainType {
     Vga,
     Linearity,
     Sensitivity,
+}
+
+impl GainType {
+    pub(super) fn update(self, gain: f64) -> GainConfig {
+        let gain = gain.round() as u8;
+        match self {
+            Self::Linearity => GainConfig::Preset(GainPreset::Linearity(gain)),
+            Self::Sensitivity => GainConfig::Preset(GainPreset::Sensitivity(gain)),
+            Self::Lna => GainConfig::Manual {
+                lna: Some(gain),
+                mixer: None,
+                vga: None,
+                lna_agc: None,
+                mixer_agc: None,
+            },
+            Self::Mixer => GainConfig::Manual {
+                lna: None,
+                mixer: Some(gain),
+                vga: None,
+                lna_agc: None,
+                mixer_agc: None,
+            },
+            Self::Vga => GainConfig::Manual {
+                lna: None,
+                mixer: None,
+                vga: Some(gain),
+                lna_agc: None,
+                mixer_agc: None,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -166,24 +246,6 @@ pub(super) fn device_selector(args: &Args) -> Result<DeviceSelector, Error> {
         Err(err) => Err(err),
     }
 }
-pub(super) fn manual_gain_config(inner: &ReceiverState) -> GainConfig {
-    GainConfig::Manual {
-        lna: cached_gain_value(inner, GainType::Lna),
-        mixer: cached_gain_value(inner, GainType::Mixer),
-        vga: cached_gain_value(inner, GainType::Vga),
-        lna_agc: Some(inner.agc),
-        mixer_agc: Some(inner.agc),
-    }
-}
-
-pub(super) fn cached_gain_value(inner: &ReceiverState, gain_type: GainType) -> Option<u8> {
-    inner
-        .gains
-        .iter()
-        .find(|cached| cached.gain_type == gain_type)
-        .map(|cached| cached.value.round() as u8)
-}
-
 pub(super) fn gain_cache_item(
     name: &'static str,
     gain_type: GainType,

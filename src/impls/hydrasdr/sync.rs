@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use hydrasdr_rs::{
-    DecimationMode, Device as HydraSdrDevice, F32RxStream, GainConfig, GainPreset, MaybeFuture,
-    RfPort, SampleFormat,
+    DecimationMode, Device as HydraSdrDevice, F32RxStream, GainConfig, MaybeFuture, RfPort,
+    SampleFormat,
 };
 use num_complex::Complex32;
 
@@ -265,8 +265,7 @@ impl HydraSdr {
             self.lock_idle_session()?.set_gain(gain)?;
         }
         let mut inner = self.inner.lock().unwrap();
-        inner.agc = agc;
-        inner.gain_config = manual_gain_config(&inner);
+        inner.set_agc_cached(agc);
         Ok(())
     }
 
@@ -316,49 +315,13 @@ impl HydraSdr {
             return Err(Error::out_of_range("gain", range, gain));
         }
 
-        let gain_update = match gain_type {
-            GainType::Linearity => GainConfig::Preset(GainPreset::Linearity(gain.round() as u8)),
-            GainType::Sensitivity => {
-                GainConfig::Preset(GainPreset::Sensitivity(gain.round() as u8))
-            }
-            GainType::Lna => GainConfig::Manual {
-                lna: Some(gain.round() as u8),
-                mixer: None,
-                vga: None,
-                lna_agc: None,
-                mixer_agc: None,
-            },
-            GainType::Mixer => GainConfig::Manual {
-                lna: None,
-                mixer: Some(gain.round() as u8),
-                vga: None,
-                lna_agc: None,
-                mixer_agc: None,
-            },
-            GainType::Vga => GainConfig::Manual {
-                lna: None,
-                mixer: None,
-                vga: Some(gain.round() as u8),
-                lna_agc: None,
-                mixer_agc: None,
-            },
-        };
+        let gain_update = gain_type.update(gain);
         self.ensure_rx_config_idle()?;
         {
             self.lock_idle_session()?.set_gain(gain_update)?;
         }
         let mut inner = self.inner.lock().unwrap();
-        if let Some(cached) = inner
-            .gains
-            .iter_mut()
-            .find(|cached| cached.gain_type == gain_type)
-        {
-            cached.value = gain;
-        }
-        inner.gain_config = match gain_type {
-            GainType::Linearity | GainType::Sensitivity => gain_update,
-            GainType::Lna | GainType::Mixer | GainType::Vga => manual_gain_config(&inner),
-        };
+        inner.set_gain_cached(gain_type, gain, gain_update);
         Ok(())
     }
 
@@ -377,14 +340,11 @@ impl HydraSdr {
             self.inner
                 .lock()
                 .unwrap()
-                .gains
-                .iter()
-                .find(|cached| cached.gain_type == gain_type)
+                .gain_value(gain_type)
                 .ok_or(Error::invalid_argument(
                     "hydrasdr",
                     "invalid HydraSDR argument",
-                ))?
-                .value,
+                ))?,
         ))
     }
 
@@ -399,19 +359,14 @@ impl HydraSdr {
             "hydrasdr",
             "invalid HydraSDR argument",
         ))?;
-        Ok(self
-            .inner
+        self.inner
             .lock()
             .unwrap()
-            .gains
-            .iter()
-            .find(|cached| cached.gain_type == gain_type)
+            .gain_range(gain_type)
             .ok_or(Error::invalid_argument(
                 "hydrasdr",
                 "invalid HydraSDR argument",
-            ))?
-            .range
-            .clone())
+            ))
     }
 
     fn frequency_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
