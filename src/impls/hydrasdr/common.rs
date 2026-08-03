@@ -1,0 +1,257 @@
+use hydrasdr_rs::{DeviceDescriptor, ErrorKind, GainConfig, RfPort};
+
+use crate::Direction::*;
+use crate::{Args, Capability, Direction, Error, Range, RangeItem};
+
+pub(super) const MTU: usize = 262_144 / 8;
+pub(super) const DEFAULT_SAMPLE_RATE_MIN: f64 = 10_000.0;
+pub(super) const DEFAULT_BANDWIDTH_MIN: f64 = 1_000.0;
+#[derive(Clone)]
+pub(super) struct Inner {
+    pub(super) antenna: &'static str,
+    pub(super) frequency: Option<f64>,
+    pub(super) sample_rate: Option<f64>,
+    pub(super) bandwidth: Option<f64>,
+    pub(super) sample_rates: Vec<u32>,
+    pub(super) bandwidths: Vec<u32>,
+    pub(super) gains: Vec<GainCache>,
+    pub(super) gain_config: GainConfig,
+    pub(super) agc: bool,
+    pub(super) active_rx_streams: usize,
+    pub(super) min_frequency: f64,
+    pub(super) max_frequency: f64,
+}
+
+#[derive(Clone)]
+pub(super) struct GainCache {
+    pub(super) name: &'static str,
+    pub(super) gain_type: GainType,
+    pub(super) value: f64,
+    pub(super) range: Range,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum GainType {
+    Lna,
+    Mixer,
+    Vga,
+    Linearity,
+    Sensitivity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DeviceSelector {
+    First,
+    Serial(u64),
+    Index(usize),
+}
+
+pub(super) fn check_rx(direction: Direction, channel: usize) -> Result<(), Error> {
+    if matches!(direction, Rx) && channel == 0 {
+        Ok(())
+    } else if matches!(direction, Rx) {
+        Err(Error::invalid_channel(Direction::Rx, channel, 1))
+    } else {
+        Err(Error::unsupported(Capability::RxStreaming))
+    }
+}
+
+pub(super) fn antenna_port(name: &str) -> Option<(&'static str, RfPort)> {
+    match name.to_ascii_uppercase().as_str() {
+        "ANT" => Some(("ANT", RfPort::Rx0)),
+        "CABLE1" => Some(("CABLE1", RfPort::Rx1)),
+        "CABLE2" => Some(("CABLE2", RfPort::Rx2)),
+        _ => None,
+    }
+}
+
+pub(super) fn gain_type(name: &str) -> Option<GainType> {
+    match name.to_ascii_uppercase().as_str() {
+        "LNA" => Some(GainType::Lna),
+        "MIXER" => Some(GainType::Mixer),
+        "VGA" => Some(GainType::Vga),
+        "LINEARITY" => Some(GainType::Linearity),
+        "SENSITIVITY" => Some(GainType::Sensitivity),
+        _ => None,
+    }
+}
+
+pub(super) fn default_gain_cache() -> Vec<GainCache> {
+    [
+        ("LNA", GainType::Lna, 0, 14, 8),
+        ("MIXER", GainType::Mixer, 0, 15, 8),
+        ("VGA", GainType::Vga, 0, 15, 8),
+        ("LINEARITY", GainType::Linearity, 0, 21, 10),
+        ("SENSITIVITY", GainType::Sensitivity, 0, 21, 10),
+    ]
+    .into_iter()
+    .map(|(name, gain_type, min_value, max_value, value)| {
+        gain_cache_item(name, gain_type, min_value, max_value, 1, value)
+    })
+    .collect()
+}
+
+pub(super) fn probe_args_from_info(dev: DeviceDescriptor) -> Args {
+    let mut args = Args::default();
+    args.set("driver", "hydrasdr");
+    args.set("vid", format!("0x{:04x}", dev.vid));
+    args.set("pid", format!("0x{:04x}", dev.pid));
+    args.set("description", dev.description);
+    if let Some(serial) = dev.serial {
+        args.set("serial", serial.to_string());
+    }
+    if let Some(product) = dev.product_string {
+        args.set("product", product);
+    }
+    args
+}
+
+pub(super) fn device_selector(args: &Args) -> Result<DeviceSelector, Error> {
+    match args.get::<usize>("index") {
+        Ok(index) => return Ok(DeviceSelector::Index(index)),
+        Err(Error::MissingArgument { .. }) => {}
+        Err(err) => return Err(err),
+    }
+
+    match args.get::<u64>("serial") {
+        Ok(serial) => Ok(DeviceSelector::Serial(serial)),
+        Err(Error::MissingArgument { .. }) => Ok(DeviceSelector::First),
+        Err(err) => Err(err),
+    }
+}
+pub(super) fn manual_gain_config(inner: &Inner) -> GainConfig {
+    GainConfig::Manual {
+        lna: cached_gain_value(inner, GainType::Lna),
+        mixer: cached_gain_value(inner, GainType::Mixer),
+        vga: cached_gain_value(inner, GainType::Vga),
+        lna_agc: Some(inner.agc),
+        mixer_agc: Some(inner.agc),
+    }
+}
+
+pub(super) fn cached_gain_value(inner: &Inner, gain_type: GainType) -> Option<u8> {
+    inner
+        .gains
+        .iter()
+        .find(|cached| cached.gain_type == gain_type)
+        .map(|cached| cached.value.round() as u8)
+}
+
+pub(super) fn gain_cache_item(
+    name: &'static str,
+    gain_type: GainType,
+    min_value: u8,
+    max_value: u8,
+    step_value: u8,
+    value: u8,
+) -> GainCache {
+    let step = step_value.max(1) as f64;
+    GainCache {
+        name,
+        gain_type,
+        value: value as f64,
+        range: Range::new(vec![RangeItem::Step(
+            min_value as f64,
+            max_value as f64,
+            step,
+        )]),
+    }
+}
+
+pub(super) fn map_hydrasdr_error(err: hydrasdr_rs::Error) -> Error {
+    match err.kind() {
+        ErrorKind::InvalidConfig => Error::invalid_argument("hydrasdr", err.to_string()),
+        ErrorKind::NotFound => Error::DeviceNotFound,
+        ErrorKind::Busy => Error::Busy,
+        ErrorKind::Unsupported => Error::unsupported(Capability::DriverOperation),
+        ErrorKind::StreamClosed => Error::StreamClosed,
+        _ => err.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_args_from_info_maps_usb_metadata_without_opening_hardware() {
+        let info = DeviceDescriptor {
+            vid: 0x38af,
+            pid: 0x0001,
+            description: "HydraSDR RFOne Official VID/PID",
+            serial: Some(0x1234_5678_9abc_def0),
+            product_string: Some("HydraSDR RFOne".to_string()),
+        };
+
+        let args = probe_args_from_info(info);
+
+        assert_eq!(args.get::<String>("driver").unwrap(), "hydrasdr");
+        assert_eq!(args.get::<String>("vid").unwrap(), "0x38af");
+        assert_eq!(args.get::<String>("pid").unwrap(), "0x0001");
+        assert_eq!(
+            args.get::<String>("description").unwrap(),
+            "HydraSDR RFOne Official VID/PID"
+        );
+        assert_eq!(args.get::<String>("serial").unwrap(), "1311768467463790320");
+        assert_eq!(args.get::<String>("product").unwrap(), "HydraSDR RFOne");
+    }
+
+    #[test]
+    fn check_rx_accepts_only_rx_channel_zero_and_rejects_tx() {
+        assert!(check_rx(Rx, 0).is_ok());
+        assert!(matches!(
+            check_rx(Rx, 1),
+            Err(Error::InvalidChannel {
+                direction: Rx,
+                channel: 1,
+                available: 1,
+            })
+        ));
+        assert!(matches!(
+            check_rx(Tx, 0),
+            Err(Error::Unsupported {
+                capability: Capability::RxStreaming,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn device_selector_defaults_to_first_device() {
+        let args = Args::default();
+
+        assert_eq!(device_selector(&args).unwrap(), DeviceSelector::First);
+    }
+
+    #[test]
+    fn device_selector_accepts_serial() {
+        let args: Args = "driver=hydrasdr,serial=1234".try_into().unwrap();
+
+        assert_eq!(
+            device_selector(&args).unwrap(),
+            DeviceSelector::Serial(1234)
+        );
+    }
+
+    #[test]
+    fn device_selector_prefers_index_over_serial_like_other_seify_drivers() {
+        let args: Args = "driver=hydrasdr,index=2,serial=1234".try_into().unwrap();
+
+        assert_eq!(device_selector(&args).unwrap(), DeviceSelector::Index(2));
+    }
+
+    #[test]
+    fn device_selector_rejects_invalid_index_and_serial_args() {
+        let bad_index: Args = "driver=hydrasdr,index=not-a-number".try_into().unwrap();
+        assert!(matches!(
+            device_selector(&bad_index),
+            Err(Error::InvalidArgument { name, .. }) if name == "index"
+        ));
+
+        let bad_serial: Args = "driver=hydrasdr,serial=not-a-number".try_into().unwrap();
+        assert!(matches!(
+            device_selector(&bad_serial),
+            Err(Error::InvalidArgument { name, .. }) if name == "serial"
+        ));
+    }
+}
