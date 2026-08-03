@@ -21,25 +21,28 @@ use crate::{
 /// Asynchronous HydraSDR RFOne device backend.
 #[derive(Clone)]
 pub struct AsyncHydraSdr {
-    session: Shared<AsyncMutex<AsyncHydraSession>>,
+    session_slot: Shared<AsyncSessionSlot>,
     serial: Option<u64>,
     inner: Shared<AsyncMutex<ReceiverState>>,
-    rx_stream_active: Shared<AtomicBool>,
+    streamer_claimed: Shared<AtomicBool>,
     cleanup_needed: Shared<AtomicBool>,
 }
 
 /// HydraSDR RFOne asynchronous receive streamer.
 ///
-/// Activation uses one shared owned HydraSDR stream and persistent USB queue. Explicit
-/// deactivation performs receiver-off cleanup. Dropping an active streamer leaves the session
-/// available for cleanup by the next asynchronous device or stream operation.
+/// The streamer exclusively owns the HydraSDR session until it is deactivated or dropped.
+/// Explicit deactivation stops reception and returns the session to the device so that settings
+/// can be changed before reactivation. Dropping an active streamer leaves receiver-off cleanup to
+/// the next asynchronous device or stream operation.
 #[must_use = "deactivate the HydraSDR stream before dropping it"]
 pub struct AsyncHydraSdrRxStreamer {
-    session: Shared<AsyncMutex<AsyncHydraSession>>,
-    rx_stream_active: Shared<AtomicBool>,
+    session_slot: Shared<AsyncSessionSlot>,
+    streamer_claimed: Shared<AtomicBool>,
     cleanup_needed: Shared<AtomicBool>,
+    session: Option<AsyncHydraSession>,
     iq_scratch: Vec<(f32, f32)>,
     active: bool,
+    stop_required: bool,
 }
 
 enum AsyncHydraSession {
@@ -60,6 +63,14 @@ impl AsyncHydraSession {
             Self::Stream(stream) => Ok(stream),
             Self::Disconnected => Err(Error::DeviceDisconnected),
             Self::Device(_) => unreachable!(),
+        }
+    }
+
+    async fn stop_stream(&mut self) -> Result<(), Error> {
+        match self {
+            Self::Device(_) => Ok(()),
+            Self::Stream(stream) => stream.stop().await.map(|_| ()).map_err(map_hydrasdr_error),
+            Self::Disconnected => Err(Error::DeviceDisconnected),
         }
     }
 
@@ -109,23 +120,110 @@ impl AsyncHydraSession {
     }
 }
 
-struct ActivationClaim {
-    rx_stream_active: Shared<AtomicBool>,
-    cleanup_needed: Shared<AtomicBool>,
+#[cfg(not(target_arch = "wasm32"))]
+struct AsyncSessionSlot(std::sync::Mutex<Option<AsyncHydraSession>>);
+
+#[cfg(target_arch = "wasm32")]
+struct AsyncSessionSlot(std::cell::RefCell<Option<AsyncHydraSession>>);
+
+impl AsyncSessionSlot {
+    fn new(session: AsyncHydraSession) -> Self {
+        Self(Default::default()).with_session(session)
+    }
+
+    fn with_session(self, session: AsyncHydraSession) -> Self {
+        let result = self.put(session);
+        debug_assert!(result.is_ok());
+        self
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn take(&self) -> Option<AsyncHydraSession> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn take(&self) -> Option<AsyncHydraSession> {
+        self.0.borrow_mut().take()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn put(&self, session: AsyncHydraSession) -> Result<(), AsyncHydraSession> {
+        let mut slot = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_some() {
+            Err(session)
+        } else {
+            *slot = Some(session);
+            Ok(())
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn put(&self, session: AsyncHydraSession) -> Result<(), AsyncHydraSession> {
+        let mut slot = self.0.borrow_mut();
+        if slot.is_some() {
+            Err(session)
+        } else {
+            *slot = Some(session);
+            Ok(())
+        }
+    }
+}
+
+struct AsyncSessionLease {
+    slot: Shared<AsyncSessionSlot>,
+    session: Option<AsyncHydraSession>,
+}
+
+impl AsyncSessionLease {
+    fn acquire(slot: &Shared<AsyncSessionSlot>) -> Result<Self, Error> {
+        let session = slot.take().ok_or(Error::Busy)?;
+        Ok(Self {
+            slot: Shared::clone(slot),
+            session: Some(session),
+        })
+    }
+
+    fn session_mut(&mut self) -> &mut AsyncHydraSession {
+        self.session
+            .as_mut()
+            .expect("session lease always owns a session")
+    }
+
+    fn into_session(mut self) -> AsyncHydraSession {
+        self.session
+            .take()
+            .expect("session lease always owns a session")
+    }
+}
+
+impl Drop for AsyncSessionLease {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.take() {
+            let result = self.slot.put(session);
+            debug_assert!(result.is_ok(), "session slot was unexpectedly occupied");
+        }
+    }
+}
+
+struct AsyncStreamerClaim {
+    streamer_claimed: Shared<AtomicBool>,
     committed: bool,
 }
 
-impl ActivationClaim {
-    fn acquire(
-        rx_stream_active: &Shared<AtomicBool>,
-        cleanup_needed: &Shared<AtomicBool>,
-    ) -> Result<Self, Error> {
-        rx_stream_active
+impl AsyncStreamerClaim {
+    fn acquire(streamer_claimed: &Shared<AtomicBool>) -> Result<Self, Error> {
+        streamer_claimed
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| Error::Busy)?;
         Ok(Self {
-            rx_stream_active: Shared::clone(rx_stream_active),
-            cleanup_needed: Shared::clone(cleanup_needed),
+            streamer_claimed: Shared::clone(streamer_claimed),
             committed: false,
         })
     }
@@ -135,11 +233,10 @@ impl ActivationClaim {
     }
 }
 
-impl Drop for ActivationClaim {
+impl Drop for AsyncStreamerClaim {
     fn drop(&mut self) {
         if !self.committed {
-            self.cleanup_needed.store(true, Ordering::SeqCst);
-            self.rx_stream_active.store(false, Ordering::SeqCst);
+            self.streamer_claimed.store(false, Ordering::SeqCst);
         }
     }
 }
@@ -151,9 +248,7 @@ async fn cleanup_abandoned_session(
     if !cleanup_needed.load(Ordering::SeqCst) {
         return Ok(());
     }
-    if let AsyncHydraSession::Stream(stream) = session {
-        stream.stop().await.map_err(map_hydrasdr_error)?;
-    }
+    session.stop_stream().await?;
     cleanup_needed.store(false, Ordering::SeqCst);
     Ok(())
 }
@@ -180,29 +275,19 @@ impl AsyncHydraSdr {
         let receiver_state = ReceiverState::from_device_info(dev.info(), sample_rates, bandwidths);
 
         Ok(Self {
-            session: Shared::new(AsyncMutex::new(AsyncHydraSession::Device(Box::new(dev)))),
+            session_slot: Shared::new(AsyncSessionSlot::new(AsyncHydraSession::Device(Box::new(
+                dev,
+            )))),
             serial,
             inner: Shared::new(AsyncMutex::new(receiver_state)),
-            rx_stream_active: Shared::new(AtomicBool::new(false)),
+            streamer_claimed: Shared::new(AtomicBool::new(false)),
             cleanup_needed: Shared::new(AtomicBool::new(false)),
         })
     }
 
-    fn ensure_rx_config_idle(&self) -> Result<(), Error> {
-        if !self.rx_stream_active.load(Ordering::SeqCst) {
-            Ok(())
-        } else {
-            Err(Error::Busy)
-        }
-    }
-
-    async fn lock_idle_session(
-        &self,
-    ) -> Result<futures::lock::MutexGuard<'_, AsyncHydraSession>, Error> {
-        self.ensure_rx_config_idle()?;
-        let mut session = self.session.lock().await;
-        self.ensure_rx_config_idle()?;
-        cleanup_abandoned_session(&mut session, &self.cleanup_needed).await?;
+    async fn lease_idle_session(&self) -> Result<AsyncSessionLease, Error> {
+        let mut session = AsyncSessionLease::acquire(&self.session_slot)?;
+        cleanup_abandoned_session(session.session_mut(), &self.cleanup_needed).await?;
         Ok(session)
     }
 }
@@ -260,8 +345,8 @@ impl AsyncHydraSdr {
             "hydrasdr",
             "invalid HydraSDR argument",
         ))?;
-        let mut session = self.lock_idle_session().await?;
-        session.set_rf_port(port).await?;
+        let mut session = self.lease_idle_session().await?;
+        session.session_mut().set_rf_port(port).await?;
         self.inner.lock().await.antenna = name;
         Ok(())
     }
@@ -285,8 +370,8 @@ impl AsyncHydraSdr {
             lna_agc: Some(agc),
             mixer_agc: Some(agc),
         };
-        let mut session = self.lock_idle_session().await?;
-        session.set_gain(gain).await?;
+        let mut session = self.lease_idle_session().await?;
+        session.session_mut().set_gain(gain).await?;
         let mut inner = self.inner.lock().await;
         inner.set_agc_cached(agc);
         Ok(())
@@ -345,8 +430,8 @@ impl AsyncHydraSdr {
         }
 
         let gain_update = gain_type.update(gain);
-        let mut session = self.lock_idle_session().await?;
-        session.set_gain(gain_update).await?;
+        let mut session = self.lease_idle_session().await?;
+        session.session_mut().set_gain(gain_update).await?;
         let mut inner = self.inner.lock().await;
         inner.set_gain_cached(gain_type, gain);
         Ok(())
@@ -472,8 +557,11 @@ impl AsyncHydraSdr {
         if !range.contains(frequency) {
             return Err(Error::out_of_range("frequency", range, frequency));
         }
-        let mut session = self.lock_idle_session().await?;
-        session.set_frequency_hz(frequency as u64).await?;
+        let mut session = self.lease_idle_session().await?;
+        session
+            .session_mut()
+            .set_frequency_hz(frequency as u64)
+            .await?;
         self.inner.lock().await.frequency = Some(frequency);
         Ok(())
     }
@@ -497,8 +585,11 @@ impl AsyncHydraSdr {
         if !range.contains(rate) {
             return Err(Error::out_of_range("sample_rate", range, rate));
         }
-        let mut session = self.lock_idle_session().await?;
-        session.set_sample_rate_hz(rate as u32).await?;
+        let mut session = self.lease_idle_session().await?;
+        session
+            .session_mut()
+            .set_sample_rate_hz(rate as u32)
+            .await?;
         self.inner.lock().await.sample_rate = Some(rate);
         Ok(())
     }
@@ -532,8 +623,8 @@ impl AsyncHydraSdr {
         if !range.contains(bw) {
             return Err(Error::out_of_range("bandwidth", range, bw));
         }
-        let mut session = self.lock_idle_session().await?;
-        session.set_bandwidth_hz(bw as u32).await?;
+        let mut session = self.lease_idle_session().await?;
+        session.session_mut().set_bandwidth_hz(bw as u32).await?;
         self.inner.lock().await.bandwidth = Some(bw);
         Ok(())
     }
@@ -589,12 +680,16 @@ impl AsyncRxDevice for AsyncHydraSdr {
                 "invalid HydraSDR argument",
             ));
         }
-        self.ensure_rx_config_idle()?;
-        Ok(AsyncHydraSdrRxStreamer::new(
-            Shared::clone(&self.session),
-            Shared::clone(&self.rx_stream_active),
+        let claim = AsyncStreamerClaim::acquire(&self.streamer_claimed)?;
+        let session = self.lease_idle_session().await?.into_session();
+        let streamer = AsyncHydraSdrRxStreamer::new(
+            Shared::clone(&self.session_slot),
+            Shared::clone(&self.streamer_claimed),
             Shared::clone(&self.cleanup_needed),
-        ))
+            session,
+        );
+        claim.commit();
+        Ok(streamer)
     }
 }
 
@@ -807,16 +902,49 @@ impl AsyncBandwidthControl for AsyncHydraSdr {
 
 impl AsyncHydraSdrRxStreamer {
     fn new(
-        session: Shared<AsyncMutex<AsyncHydraSession>>,
-        rx_stream_active: Shared<AtomicBool>,
+        session_slot: Shared<AsyncSessionSlot>,
+        streamer_claimed: Shared<AtomicBool>,
         cleanup_needed: Shared<AtomicBool>,
+        session: AsyncHydraSession,
     ) -> Self {
         Self {
-            session,
-            rx_stream_active,
+            session_slot,
+            streamer_claimed,
             cleanup_needed,
+            session: Some(session),
             iq_scratch: Vec::new(),
             active: false,
+            stop_required: false,
+        }
+    }
+
+    async fn take_session(&mut self) -> Result<(), Error> {
+        if self.session.is_none() {
+            let mut session = AsyncSessionLease::acquire(&self.session_slot)?;
+            cleanup_abandoned_session(session.session_mut(), &self.cleanup_needed).await?;
+            self.session = Some(session.into_session());
+        } else if self.cleanup_needed.load(Ordering::SeqCst) {
+            cleanup_abandoned_session(
+                self.session.as_mut().ok_or(Error::DeviceDisconnected)?,
+                &self.cleanup_needed,
+            )
+            .await?;
+            self.stop_required = false;
+            self.active = false;
+        }
+        Ok(())
+    }
+
+    fn return_session(&mut self) -> Result<(), Error> {
+        let Some(session) = self.session.take() else {
+            return Ok(());
+        };
+        match self.session_slot.put(session) {
+            Ok(()) => Ok(()),
+            Err(session) => {
+                self.session = Some(session);
+                Err(Error::Busy)
+            }
         }
     }
 }
@@ -833,9 +961,10 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         if self.active {
             return Ok(());
         }
-        let claim = ActivationClaim::acquire(&self.rx_stream_active, &self.cleanup_needed)?;
-        let mut session = self.session.lock().await;
-        cleanup_abandoned_session(&mut session, &self.cleanup_needed).await?;
+        self.take_session().await?;
+        let session = self.session.as_mut().ok_or(Error::DeviceDisconnected)?;
+        self.cleanup_needed.store(true, Ordering::SeqCst);
+        self.stop_required = true;
         session
             .ensure_stream()?
             .start()
@@ -843,7 +972,6 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
             .map_err(map_hydrasdr_error)?;
         self.cleanup_needed.store(false, Ordering::SeqCst);
         self.active = true;
-        claim.commit();
         Ok(())
     }
 
@@ -851,18 +979,19 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         if time_ns.is_some() {
             return Err(Error::unsupported(Capability::TimedDeactivation));
         }
-        if !self.active {
-            return Ok(());
+        if self.stop_required {
+            self.cleanup_needed.store(true, Ordering::SeqCst);
+            self.active = false;
+            self.session
+                .as_mut()
+                .ok_or(Error::DeviceDisconnected)?
+                .stop_stream()
+                .await?;
+            self.stop_required = false;
+            self.cleanup_needed.store(false, Ordering::SeqCst);
         }
-        let mut session = self.session.lock().await;
-        let AsyncHydraSession::Stream(stream) = &mut *session else {
-            return Err(Error::DeviceDisconnected);
-        };
-        stream.stop().await.map_err(map_hydrasdr_error)?;
-        self.cleanup_needed.store(false, Ordering::SeqCst);
-        self.rx_stream_active.store(false, Ordering::SeqCst);
         self.active = false;
-        Ok(())
+        self.return_session()
     }
 
     async fn read<'a>(
@@ -879,8 +1008,7 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         }
 
         let out = &mut buffers[0];
-        let mut session = self.session.lock().await;
-        let AsyncHydraSession::Stream(stream) = &mut *session else {
+        let Some(AsyncHydraSession::Stream(stream)) = self.session.as_mut() else {
             return Err(Error::DeviceDisconnected);
         };
         let read = match with_timeout(
@@ -898,11 +1026,15 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
 
 impl Drop for AsyncHydraSdrRxStreamer {
     fn drop(&mut self) {
-        if self.active {
+        if self.stop_required {
             self.cleanup_needed.store(true, Ordering::SeqCst);
-            self.rx_stream_active.store(false, Ordering::SeqCst);
+        }
+        if let Some(session) = self.session.take() {
+            let result = self.session_slot.put(session);
+            debug_assert!(result.is_ok(), "session slot was unexpectedly occupied");
         }
         self.active = false;
+        self.streamer_claimed.store(false, Ordering::SeqCst);
     }
 }
 
@@ -1012,32 +1144,43 @@ mod tests {
 
     #[cfg(any(feature = "smol", feature = "tokio"))]
     #[test]
-    fn canceled_async_activation_releases_claim_and_requests_cleanup() {
-        let active = Shared::new(AtomicBool::new(false));
-        let cleanup = Shared::new(AtomicBool::new(false));
+    fn abandoned_async_streamer_creation_releases_claim() {
+        let claimed = Shared::new(AtomicBool::new(false));
 
-        let claim = ActivationClaim::acquire(&active, &cleanup).expect("acquire stream claim");
-        assert!(active.load(Ordering::SeqCst));
+        let claim = AsyncStreamerClaim::acquire(&claimed).expect("acquire streamer claim");
+        assert!(claimed.load(Ordering::SeqCst));
         drop(claim);
 
-        assert!(!active.load(Ordering::SeqCst));
-        assert!(cleanup.load(Ordering::SeqCst));
+        assert!(!claimed.load(Ordering::SeqCst));
     }
 
     #[cfg(any(feature = "smol", feature = "tokio"))]
     #[test]
-    fn committed_async_activation_keeps_exclusive_claim() {
-        let active = Shared::new(AtomicBool::new(false));
-        let cleanup = Shared::new(AtomicBool::new(false));
+    fn committed_async_streamer_claim_is_exclusive() {
+        let claimed = Shared::new(AtomicBool::new(false));
 
-        let claim = ActivationClaim::acquire(&active, &cleanup).expect("acquire stream claim");
+        let claim = AsyncStreamerClaim::acquire(&claimed).expect("acquire streamer claim");
         claim.commit();
 
-        assert!(active.load(Ordering::SeqCst));
-        assert!(!cleanup.load(Ordering::SeqCst));
+        assert!(claimed.load(Ordering::SeqCst));
         assert!(matches!(
-            ActivationClaim::acquire(&active, &cleanup),
+            AsyncStreamerClaim::acquire(&claimed),
             Err(Error::Busy)
         ));
+    }
+
+    #[cfg(any(feature = "smol", feature = "tokio"))]
+    #[test]
+    fn dropping_async_session_lease_returns_session() {
+        let slot = Shared::new(AsyncSessionSlot::new(AsyncHydraSession::Disconnected));
+
+        let lease = AsyncSessionLease::acquire(&slot).expect("acquire session lease");
+        assert!(matches!(
+            AsyncSessionLease::acquire(&slot),
+            Err(Error::Busy)
+        ));
+        drop(lease);
+
+        assert!(AsyncSessionLease::acquire(&slot).is_ok());
     }
 }
