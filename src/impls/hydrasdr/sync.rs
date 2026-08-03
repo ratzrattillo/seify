@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hydrasdr_rs::{
@@ -18,17 +18,22 @@ use crate::{
 /// HydraSDR RFOne device backend.
 #[derive(Clone)]
 pub struct HydraSdr {
-    session: Arc<Mutex<SyncHydraSession>>,
+    session_slot: Arc<Mutex<Option<SyncHydraSession>>>,
     serial: Option<u64>,
     inner: Arc<Mutex<ReceiverState>>,
-    rx_stream_active: Arc<AtomicBool>,
+    streamer_claimed: Arc<AtomicBool>,
 }
-/// HydraSDR RFOne receive streamer.
+/// Exclusively claimed HydraSDR RFOne receive streamer.
+///
+/// The streamer owns the driver session while receiving and returns it to the
+/// device on deactivation so focused configuration remains available.
 pub struct RxStreamer {
-    session: Arc<Mutex<SyncHydraSession>>,
-    rx_stream_active: Arc<AtomicBool>,
+    session_slot: Arc<Mutex<Option<SyncHydraSession>>>,
+    streamer_claimed: Arc<AtomicBool>,
+    session: Option<SyncHydraSession>,
     iq_scratch: Vec<(f32, f32)>,
     active: bool,
+    stop_required: bool,
 }
 
 enum SyncHydraSession {
@@ -105,18 +110,18 @@ impl SyncHydraSession {
     }
 }
 
-struct SyncActivationClaim {
-    rx_stream_active: Arc<AtomicBool>,
+struct SyncStreamerClaim {
+    streamer_claimed: Arc<AtomicBool>,
     committed: bool,
 }
 
-impl SyncActivationClaim {
-    fn acquire(rx_stream_active: &Arc<AtomicBool>) -> Result<Self, Error> {
-        rx_stream_active
+impl SyncStreamerClaim {
+    fn acquire(streamer_claimed: &Arc<AtomicBool>) -> Result<Self, Error> {
+        streamer_claimed
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| Error::Busy)?;
         Ok(Self {
-            rx_stream_active: Arc::clone(rx_stream_active),
+            streamer_claimed: Arc::clone(streamer_claimed),
             committed: false,
         })
     }
@@ -126,10 +131,10 @@ impl SyncActivationClaim {
     }
 }
 
-impl Drop for SyncActivationClaim {
+impl Drop for SyncStreamerClaim {
     fn drop(&mut self) {
         if !self.committed {
-            self.rx_stream_active.store(false, Ordering::SeqCst);
+            self.streamer_claimed.store(false, Ordering::SeqCst);
         }
     }
 }
@@ -156,27 +161,21 @@ impl HydraSdr {
         let receiver_state = ReceiverState::from_device_info(dev.info(), sample_rates, bandwidths);
 
         Ok(Self {
-            session: Arc::new(Mutex::new(SyncHydraSession::Device(Box::new(dev)))),
+            session_slot: Arc::new(Mutex::new(Some(SyncHydraSession::Device(Box::new(dev))))),
             serial,
             inner: Arc::new(Mutex::new(receiver_state)),
-            rx_stream_active: Arc::new(AtomicBool::new(false)),
+            streamer_claimed: Arc::new(AtomicBool::new(false)),
         })
     }
 
-    fn ensure_rx_config_idle(&self) -> Result<(), Error> {
-        if !self.rx_stream_active.load(Ordering::SeqCst) {
-            Ok(())
-        } else {
-            Err(Error::Busy)
-        }
-    }
-
-    fn lock_idle_session(&self) -> Result<MutexGuard<'_, SyncHydraSession>, Error> {
-        self.ensure_rx_config_idle()?;
-        let mut session = self.session.lock().unwrap();
-        self.ensure_rx_config_idle()?;
+    fn with_idle_session<T>(
+        &self,
+        operation: impl FnOnce(&mut SyncHydraSession) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        let mut slot = self.session_slot.lock().unwrap();
+        let session = slot.as_mut().ok_or(Error::Busy)?;
         session.stop_stream()?;
-        Ok(session)
+        operation(session)
     }
 }
 
@@ -230,7 +229,7 @@ impl HydraSdr {
             "hydrasdr",
             "invalid HydraSDR argument",
         ))?;
-        self.lock_idle_session()?.set_rf_port(port)?;
+        self.with_idle_session(|session| session.set_rf_port(port))?;
         self.inner.lock().unwrap().antenna = name;
         Ok(())
     }
@@ -254,7 +253,7 @@ impl HydraSdr {
             lna_agc: Some(agc),
             mixer_agc: Some(agc),
         };
-        self.lock_idle_session()?.set_gain(gain)?;
+        self.with_idle_session(|session| session.set_gain(gain))?;
         let mut inner = self.inner.lock().unwrap();
         inner.set_agc_cached(agc);
         Ok(())
@@ -307,7 +306,7 @@ impl HydraSdr {
         }
 
         let gain_update = gain_type.update(gain);
-        self.lock_idle_session()?.set_gain(gain_update)?;
+        self.with_idle_session(|session| session.set_gain(gain_update))?;
         let mut inner = self.inner.lock().unwrap();
         inner.set_gain_cached(gain_type, gain);
         Ok(())
@@ -436,8 +435,7 @@ impl HydraSdr {
         if !range.contains(frequency) {
             return Err(Error::out_of_range("frequency", range, frequency));
         }
-        self.lock_idle_session()?
-            .set_frequency_hz(frequency as u64)?;
+        self.with_idle_session(|session| session.set_frequency_hz(frequency as u64))?;
         self.inner.lock().unwrap().frequency = Some(frequency);
         Ok(())
     }
@@ -461,7 +459,7 @@ impl HydraSdr {
         if !range.contains(rate) {
             return Err(Error::out_of_range("sample_rate", range, rate));
         }
-        self.lock_idle_session()?.set_sample_rate_hz(rate as u32)?;
+        self.with_idle_session(|session| session.set_sample_rate_hz(rate as u32))?;
         self.inner.lock().unwrap().sample_rate = Some(rate);
         Ok(())
     }
@@ -486,7 +484,7 @@ impl HydraSdr {
         if !range.contains(bw) {
             return Err(Error::out_of_range("bandwidth", range, bw));
         }
-        self.lock_idle_session()?.set_bandwidth_hz(bw as u32)?;
+        self.with_idle_session(|session| session.set_bandwidth_hz(bw as u32))?;
         self.inner.lock().unwrap().bandwidth = Some(bw);
         Ok(())
     }
@@ -535,11 +533,24 @@ impl RxDevice for HydraSdr {
                 "invalid HydraSDR argument",
             ));
         }
-        self.ensure_rx_config_idle()?;
-        Ok(RxStreamer::new(
-            Arc::clone(&self.session),
-            Arc::clone(&self.rx_stream_active),
-        ))
+        let claim = SyncStreamerClaim::acquire(&self.streamer_claimed)?;
+        let mut session = self
+            .session_slot
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or(Error::Busy)?;
+        if let Err(error) = session.stop_stream() {
+            *self.session_slot.lock().unwrap() = Some(session);
+            return Err(error);
+        }
+        let streamer = RxStreamer::new(
+            Arc::clone(&self.session_slot),
+            Arc::clone(&self.streamer_claimed),
+            session,
+        );
+        claim.commit();
+        Ok(streamer)
     }
 }
 
@@ -712,13 +723,55 @@ impl BandwidthControl for HydraSdr {
 }
 
 impl RxStreamer {
-    fn new(session: Arc<Mutex<SyncHydraSession>>, rx_stream_active: Arc<AtomicBool>) -> Self {
+    fn new(
+        session_slot: Arc<Mutex<Option<SyncHydraSession>>>,
+        streamer_claimed: Arc<AtomicBool>,
+        session: SyncHydraSession,
+    ) -> Self {
         Self {
-            session,
-            rx_stream_active,
+            session_slot,
+            streamer_claimed,
+            session: Some(session),
             iq_scratch: Vec::new(),
             active: false,
+            stop_required: false,
         }
+    }
+
+    fn take_session(&mut self) -> Result<(), Error> {
+        if self.session.is_none() {
+            self.session = self.session_slot.lock().unwrap().take();
+        }
+        if self.session.is_some() {
+            Ok(())
+        } else {
+            Err(Error::Busy)
+        }
+    }
+
+    fn return_session(&mut self) -> Result<(), Error> {
+        let Some(session) = self.session.take() else {
+            return Ok(());
+        };
+        let mut slot = self.session_slot.lock().unwrap();
+        if slot.is_some() {
+            self.session = Some(session);
+            return Err(Error::Busy);
+        }
+        *slot = Some(session);
+        Ok(())
+    }
+
+    fn stop_and_return_session(&mut self) -> Result<(), Error> {
+        if self.stop_required {
+            self.session
+                .as_mut()
+                .ok_or(Error::DeviceDisconnected)?
+                .stop_stream()?;
+            self.stop_required = false;
+        }
+        self.active = false;
+        self.return_session()
     }
 }
 
@@ -734,14 +787,15 @@ impl crate::RxStreamer for RxStreamer {
         if self.active {
             return Ok(());
         }
-        let claim = SyncActivationClaim::acquire(&self.rx_stream_active)?;
-        let mut session = self.session.lock().unwrap();
-        session
+        self.take_session()?;
+        self.stop_required = true;
+        self.session
+            .as_mut()
+            .ok_or(Error::DeviceDisconnected)?
             .ensure_stream()?
             .start()
             .map_err(map_hydrasdr_error)?;
         self.active = true;
-        claim.commit();
         Ok(())
     }
 
@@ -749,12 +803,7 @@ impl crate::RxStreamer for RxStreamer {
         if time_ns.is_some() {
             return Err(Error::unsupported(Capability::TimedDeactivation));
         }
-        if self.active {
-            self.session.lock().unwrap().stop_stream()?;
-            self.active = false;
-            self.rx_stream_active.store(false, Ordering::SeqCst);
-        }
-        Ok(())
+        self.stop_and_return_session()
     }
 
     fn read(&mut self, buffers: &mut [&mut [Complex32]], timeout_us: i64) -> Result<usize, Error> {
@@ -774,8 +823,10 @@ impl crate::RxStreamer for RxStreamer {
             Duration::from_micros(timeout_us as u64)
         };
         self.iq_scratch.resize(read_len, (0.0, 0.0));
-        let mut session = self.session.lock().unwrap();
-        let read = session
+        let read = self
+            .session
+            .as_mut()
+            .ok_or(Error::DeviceDisconnected)?
             .ensure_stream()?
             .read(&mut self.iq_scratch, timeout)
             .map_err(map_hydrasdr_error)?;
@@ -792,11 +843,15 @@ impl crate::RxStreamer for RxStreamer {
 
 impl Drop for RxStreamer {
     fn drop(&mut self) {
-        let _ = <Self as crate::RxStreamer>::deactivate_at(self, None);
-        if self.active {
-            self.rx_stream_active.store(false, Ordering::SeqCst);
-            self.active = false;
+        if self.stop_required {
+            if let Some(session) = self.session.as_mut() {
+                let _ = session.stop_stream();
+            }
+            self.stop_required = false;
         }
+        self.active = false;
+        let _ = self.return_session();
+        self.streamer_claimed.store(false, Ordering::SeqCst);
     }
 }
 
@@ -857,26 +912,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn synchronous_activation_claim_is_exclusive() {
-        let active = Arc::new(AtomicBool::new(false));
-        let claim = SyncActivationClaim::acquire(&active).expect("acquire stream claim");
+    fn synchronous_streamer_claim_is_exclusive() {
+        let claimed = Arc::new(AtomicBool::new(false));
+        let claim = SyncStreamerClaim::acquire(&claimed).expect("acquire streamer claim");
 
-        assert!(active.load(Ordering::SeqCst));
+        assert!(claimed.load(Ordering::SeqCst));
         assert!(matches!(
-            SyncActivationClaim::acquire(&active),
+            SyncStreamerClaim::acquire(&claimed),
             Err(Error::Busy)
         ));
 
         claim.commit();
-        assert!(active.load(Ordering::SeqCst));
+        assert!(claimed.load(Ordering::SeqCst));
     }
 
     #[test]
-    fn abandoned_synchronous_activation_releases_claim() {
-        let active = Arc::new(AtomicBool::new(false));
-        let claim = SyncActivationClaim::acquire(&active).expect("acquire stream claim");
+    fn abandoned_synchronous_streamer_creation_releases_claim() {
+        let claimed = Arc::new(AtomicBool::new(false));
+        let claim = SyncStreamerClaim::acquire(&claimed).expect("acquire streamer claim");
         drop(claim);
 
-        assert!(!active.load(Ordering::SeqCst));
+        assert!(!claimed.load(Ordering::SeqCst));
     }
 }
