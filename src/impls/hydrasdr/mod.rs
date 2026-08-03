@@ -10,4 +10,4 @@ pub use asynchronous::{AsyncHydraSdr, AsyncHydraSdrRxStreamer};
 #[cfg(not(target_arch = "wasm32"))]
 mod sync;
 #[cfg(not(target_arch = "wasm32"))]
-pub use sync::{HydraSdr, RxStreamer, TxDummy};
+pub use sync::{HydraSdr, RxStreamer};

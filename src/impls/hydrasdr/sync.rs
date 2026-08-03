@@ -31,9 +31,6 @@ pub struct RxStreamer {
     active: bool,
 }
 
-/// Placeholder transmit streamer for unsupported TX operations.
-pub struct TxDummy;
-
 enum SyncHydraSession {
     Device(Box<HydraSdrDevice>),
     Stream(Box<F32RxStream>),
@@ -818,40 +815,6 @@ impl Drop for RxStreamer {
             self.rx_stream_active.store(false, Ordering::SeqCst);
             self.active = false;
         }
-    }
-}
-
-impl crate::TxStreamer for TxDummy {
-    fn mtu(&self) -> Result<usize, Error> {
-        unreachable!()
-    }
-
-    fn activate_at(&mut self, _time_ns: Option<i64>) -> Result<(), Error> {
-        unreachable!()
-    }
-
-    fn deactivate_at(&mut self, _time_ns: Option<i64>) -> Result<(), Error> {
-        unreachable!()
-    }
-
-    fn write(
-        &mut self,
-        _buffers: &[&[Complex32]],
-        _at_ns: Option<i64>,
-        _end_burst: bool,
-        _timeout_us: i64,
-    ) -> Result<usize, Error> {
-        unreachable!()
-    }
-
-    fn write_all(
-        &mut self,
-        _buffers: &[&[Complex32]],
-        _at_ns: Option<i64>,
-        _end_burst: bool,
-        _timeout_us: i64,
-    ) -> Result<(), Error> {
-        unreachable!()
     }
 }
 
