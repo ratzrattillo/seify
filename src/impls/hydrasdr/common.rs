@@ -3,7 +3,7 @@ use hydrasdr_rs::{Bandwidth, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig
 use crate::Direction::*;
 use crate::{Args, Capability, Direction, Error, Range, RangeItem};
 
-pub(super) const MTU: usize = 262_144 / 8;
+pub(super) const F32_RX_MTU: usize = hydrasdr_rs::MAX_F32_IQ_SAMPLES_PER_TRANSFER;
 pub(super) const DEFAULT_SAMPLE_RATE_MIN: f64 = 10_000.0;
 #[derive(Clone)]
 pub(super) struct ReceiverState {

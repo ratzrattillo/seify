@@ -889,7 +889,7 @@ impl AsyncHydraSdrRxStreamer {
 
 impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
     async fn mtu(&self) -> Result<usize, Error> {
-        Ok(MTU)
+        Ok(F32_RX_MTU)
     }
 
     async fn activate_at(&mut self, time_ns: Option<i64>) -> Result<(), Error> {
@@ -949,11 +949,8 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         let AsyncHydraSession::Stream(stream) = &mut *session else {
             return Err(Error::DeviceDisconnected);
         };
-        // One MTU maps to one HydraSDR USB completion; keeping this read to one
-        // completion makes timing out the wait cancellation-safe.
-        let read_len = out.len().min(MTU);
         let read = match with_timeout(
-            read_async_f32_stream(stream, &mut out[..read_len], &mut self.iq_scratch),
+            read_async_f32_stream(stream, out, &mut self.iq_scratch),
             timeout_from_micros(timeout_us),
         )
         .await

@@ -802,7 +802,7 @@ impl RxStreamer {
 
 impl crate::RxStreamer for RxStreamer {
     fn mtu(&self) -> Result<usize, Error> {
-        Ok(MTU)
+        Ok(F32_RX_MTU)
     }
 
     fn activate_at(&mut self, time_ns: Option<i64>) -> Result<(), Error> {
@@ -845,12 +845,13 @@ impl crate::RxStreamer for RxStreamer {
         }
 
         let out = &mut buffers[0];
+        let read_len = out.len().min(F32_RX_MTU);
         let timeout = if timeout_us < 0 {
             Duration::MAX
         } else {
             Duration::from_micros(timeout_us as u64)
         };
-        self.iq_scratch.resize(out.len(), (0.0, 0.0));
+        self.iq_scratch.resize(read_len, (0.0, 0.0));
         let mut session = self.session.lock().unwrap();
         let read = session
             .ensure_stream()?
