@@ -66,6 +66,15 @@ to their own Cargo configuration. A browser only probes HydraSDRs already
 authorized for the page. Opening the async HydraSDR backend requests permission
 when necessary, so the first open must run from a browser user gesture.
 
+A framework-free, driver-agnostic browser example with discovered receiver
+controls and a finite-capture magnitude plot lives in `examples/webusb`. Run it
+with:
+
+```bash
+cd examples/webusb
+trunk serve --open
+```
+
 Use the generic API with an argument string to select a backend at runtime:
 
 ```bash

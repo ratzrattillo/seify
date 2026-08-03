@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Seify WebUSB</title>
+    <link data-trunk rel="rust" />
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: #0b0f14;
+        color: #d8e2ec;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: linear-gradient(145deg, #111923 0%, #080b10 70%);
+      }
+
+      main {
+        width: min(1100px, calc(100% - 2rem));
+        margin: 0 auto;
+        padding: 2rem 0 3rem;
+      }
+
+      h1 { margin: 0 0 0.35rem; font-size: clamp(1.6rem, 4vw, 2.35rem); }
+      h2 { margin: 0 0 1rem; font-size: 1rem; color: #8ff0c8; }
+      p { color: #9aa9b8; line-height: 1.55; }
+
+      .card {
+        margin-top: 1rem;
+        padding: 1.1rem;
+        border: 1px solid #253241;
+        border-radius: 10px;
+        background: rgba(15, 22, 30, 0.92);
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24);
+      }
+
+      .toolbar, .capture-row {
+        display: flex;
+        gap: 0.75rem;
+        align-items: end;
+        flex-wrap: wrap;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 0.85rem;
+      }
+
+      label { display: grid; gap: 0.35rem; color: #aebdca; font-size: 0.82rem; }
+
+      input, select, button {
+        min-height: 2.55rem;
+        border: 1px solid #34475b;
+        border-radius: 6px;
+        background: #0b1118;
+        color: #e8f2fb;
+        font: inherit;
+      }
+
+      input, select { width: 100%; padding: 0.55rem 0.65rem; }
+      input[type="checkbox"] { width: 1.2rem; min-height: auto; accent-color: #43d6a3; }
+
+      .checkbox {
+        display: flex;
+        align-items: center;
+        align-self: end;
+        min-height: 2.55rem;
+        gap: 0.6rem;
+      }
+
+      button {
+        padding: 0.55rem 1rem;
+        cursor: pointer;
+        border-color: #2a9f7b;
+        background: #173d34;
+      }
+
+      button:hover:not(:disabled) { background: #205547; }
+      button:disabled { cursor: wait; opacity: 0.48; }
+
+      #status {
+        flex: 1 1 22rem;
+        min-height: 2.55rem;
+        padding: 0.65rem 0.8rem;
+        border-left: 3px solid #43d6a3;
+        background: #0a1016;
+        color: #b9c7d4;
+      }
+
+      .hint { margin: 0.35rem 0 0; font-size: 0.78rem; color: #728394; }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: auto;
+        margin-top: 1rem;
+        border: 1px solid #253241;
+        border-radius: 6px;
+        background: #070b0f;
+      }
+
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Seify / WebUSB</h1>
+      <p>Minimal Seify browser smoke test. All UI and plotting stay local to this page.</p>
+
+      <section class="card toolbar">
+        <button id="open-device" type="button">Open SDR</button>
+        <div id="status" role="status" aria-live="polite">Ready. Open the device to grant USB permission.</div>
+      </section>
+
+      <section id="device-panel" class="card" hidden>
+        <h2 id="device-name">SDR</h2>
+        <div class="grid">
+          <label id="frequency-field">
+            Frequency (Hz)
+            <input id="frequency" type="number" step="any" />
+          </label>
+          <label id="sample-rate-field">
+            Sample rate (samples/s)
+            <input id="sample-rate" type="number" step="any" />
+          </label>
+          <label id="bandwidth-field">
+            Bandwidth (Hz, optional)
+            <input id="bandwidth" type="number" step="any" placeholder="device default" />
+          </label>
+          <label id="gain-field">
+            Gain
+            <input id="gain" type="number" step="any" />
+          </label>
+          <label id="antenna-field">
+            Antenna / RF port
+            <select id="antenna">
+            </select>
+          </label>
+          <label id="agc-field" class="checkbox">
+            <input id="agc" type="checkbox" />
+            Automatic gain control
+          </label>
+          <label id="dc-offset-field" class="checkbox">
+            <input id="dc-offset" type="checkbox" />
+            Automatic DC offset correction
+          </label>
+        </div>
+        <p id="bandwidth-hint" class="hint">Leave bandwidth empty to keep the device's current bandwidth policy.</p>
+        <p id="no-controls" class="hint" hidden>This RX channel exposes no configurable controls.</p>
+        <div class="toolbar">
+          <button id="apply-config" type="button">Apply configuration</button>
+        </div>
+      </section>
+
+      <section id="capture-panel" class="card" hidden>
+        <h2>Finite capture</h2>
+        <div class="capture-row">
+          <label>
+            Complex samples
+            <input id="sample-count" type="number" min="1" max="262144" step="1" value="2048" />
+          </label>
+          <button id="capture" type="button">Grab and plot</button>
+        </div>
+        <canvas id="plot" width="1024" height="360" aria-label="Captured sample magnitude plot"></canvas>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,33 @@
+[package]
+name = "seify-webusb"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[features]
+default = ["hydrasdr"]
+hydrasdr = ["seify/hydrasdr"]
+
+[dependencies]
+num-complex = "0.4"
+seify = { path = "../..", default-features = false }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "CanvasRenderingContext2d",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlButtonElement",
+    "HtmlCanvasElement",
+    "HtmlInputElement",
+    "HtmlSelectElement",
+    "Node",
+    "Window",
+] }
+
+[patch.crates-io]
+hydrasdr-rs = { path = "../../../hydrasdr-rs" }
