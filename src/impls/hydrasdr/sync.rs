@@ -226,14 +226,11 @@ impl HydraSdr {
 
     fn set_antenna(&self, direction: Direction, channel: usize, name: &str) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        self.ensure_rx_config_idle()?;
         let (name, port) = antenna_port(name).ok_or(Error::invalid_argument(
             "hydrasdr",
             "invalid HydraSDR argument",
         ))?;
-        {
-            self.lock_idle_session()?.set_rf_port(port)?;
-        }
+        self.lock_idle_session()?.set_rf_port(port)?;
         self.inner.lock().unwrap().antenna = name;
         Ok(())
     }
@@ -250,7 +247,6 @@ impl HydraSdr {
         agc: bool,
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        self.ensure_rx_config_idle()?;
         let gain = GainConfig::Manual {
             lna: None,
             mixer: None,
@@ -258,9 +254,7 @@ impl HydraSdr {
             lna_agc: Some(agc),
             mixer_agc: Some(agc),
         };
-        {
-            self.lock_idle_session()?.set_gain(gain)?;
-        }
+        self.lock_idle_session()?.set_gain(gain)?;
         let mut inner = self.inner.lock().unwrap();
         inner.set_agc_cached(agc);
         Ok(())
@@ -313,10 +307,7 @@ impl HydraSdr {
         }
 
         let gain_update = gain_type.update(gain);
-        self.ensure_rx_config_idle()?;
-        {
-            self.lock_idle_session()?.set_gain(gain_update)?;
-        }
+        self.lock_idle_session()?.set_gain(gain_update)?;
         let mut inner = self.inner.lock().unwrap();
         inner.set_gain_cached(gain_type, gain);
         Ok(())
@@ -445,11 +436,8 @@ impl HydraSdr {
         if !range.contains(frequency) {
             return Err(Error::out_of_range("frequency", range, frequency));
         }
-        self.ensure_rx_config_idle()?;
-        {
-            self.lock_idle_session()?
-                .set_frequency_hz(frequency as u64)?;
-        }
+        self.lock_idle_session()?
+            .set_frequency_hz(frequency as u64)?;
         self.inner.lock().unwrap().frequency = Some(frequency);
         Ok(())
     }
@@ -473,10 +461,7 @@ impl HydraSdr {
         if !range.contains(rate) {
             return Err(Error::out_of_range("sample_rate", range, rate));
         }
-        self.ensure_rx_config_idle()?;
-        {
-            self.lock_idle_session()?.set_sample_rate_hz(rate as u32)?;
-        }
+        self.lock_idle_session()?.set_sample_rate_hz(rate as u32)?;
         self.inner.lock().unwrap().sample_rate = Some(rate);
         Ok(())
     }
@@ -501,10 +486,7 @@ impl HydraSdr {
         if !range.contains(bw) {
             return Err(Error::out_of_range("bandwidth", range, bw));
         }
-        self.ensure_rx_config_idle()?;
-        {
-            self.lock_idle_session()?.set_bandwidth_hz(bw as u32)?;
-        }
+        self.lock_idle_session()?.set_bandwidth_hz(bw as u32)?;
         self.inner.lock().unwrap().bandwidth = Some(bw);
         Ok(())
     }
