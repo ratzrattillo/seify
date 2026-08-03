@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::lock::Mutex as AsyncMutex;
 use hydrasdr_rs::{
@@ -25,7 +25,7 @@ pub struct AsyncHydraSdr {
     session: Shared<AsyncMutex<AsyncHydraSession>>,
     serial: Option<u64>,
     inner: Shared<AsyncMutex<ReceiverState>>,
-    active_rx_streams: Shared<AtomicUsize>,
+    rx_stream_active: Shared<AtomicBool>,
     cleanup_needed: Shared<AtomicBool>,
 }
 
@@ -37,7 +37,7 @@ pub struct AsyncHydraSdr {
 #[must_use = "deactivate the HydraSDR stream before dropping it"]
 pub struct AsyncHydraSdrRxStreamer {
     session: Shared<AsyncMutex<AsyncHydraSession>>,
-    active_rx_streams: Shared<AtomicUsize>,
+    rx_stream_active: Shared<AtomicBool>,
     cleanup_needed: Shared<AtomicBool>,
     iq_scratch: Vec<(f32, f32)>,
     active: bool,
@@ -111,21 +111,21 @@ impl AsyncHydraSession {
 }
 
 struct ActivationClaim {
-    active_rx_streams: Shared<AtomicUsize>,
+    rx_stream_active: Shared<AtomicBool>,
     cleanup_needed: Shared<AtomicBool>,
     committed: bool,
 }
 
 impl ActivationClaim {
     fn acquire(
-        active_rx_streams: &Shared<AtomicUsize>,
+        rx_stream_active: &Shared<AtomicBool>,
         cleanup_needed: &Shared<AtomicBool>,
     ) -> Result<Self, Error> {
-        active_rx_streams
-            .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+        rx_stream_active
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| Error::Busy)?;
         Ok(Self {
-            active_rx_streams: Shared::clone(active_rx_streams),
+            rx_stream_active: Shared::clone(rx_stream_active),
             cleanup_needed: Shared::clone(cleanup_needed),
             committed: false,
         })
@@ -140,7 +140,7 @@ impl Drop for ActivationClaim {
     fn drop(&mut self) {
         if !self.committed {
             self.cleanup_needed.store(true, Ordering::SeqCst);
-            self.active_rx_streams.store(0, Ordering::SeqCst);
+            self.rx_stream_active.store(false, Ordering::SeqCst);
         }
     }
 }
@@ -184,13 +184,13 @@ impl AsyncHydraSdr {
             session: Shared::new(AsyncMutex::new(AsyncHydraSession::Device(Box::new(dev)))),
             serial,
             inner: Shared::new(AsyncMutex::new(receiver_state)),
-            active_rx_streams: Shared::new(AtomicUsize::new(0)),
+            rx_stream_active: Shared::new(AtomicBool::new(false)),
             cleanup_needed: Shared::new(AtomicBool::new(false)),
         })
     }
 
     fn ensure_rx_config_idle(&self) -> Result<(), Error> {
-        if self.active_rx_streams.load(Ordering::SeqCst) == 0 {
+        if !self.rx_stream_active.load(Ordering::SeqCst) {
             Ok(())
         } else {
             Err(Error::Busy)
@@ -658,7 +658,7 @@ impl AsyncRxDevice for AsyncHydraSdr {
         self.ensure_rx_config_idle()?;
         Ok(AsyncHydraSdrRxStreamer::new(
             Shared::clone(&self.session),
-            Shared::clone(&self.active_rx_streams),
+            Shared::clone(&self.rx_stream_active),
             Shared::clone(&self.cleanup_needed),
         ))
     }
@@ -874,12 +874,12 @@ impl AsyncBandwidthControl for AsyncHydraSdr {
 impl AsyncHydraSdrRxStreamer {
     fn new(
         session: Shared<AsyncMutex<AsyncHydraSession>>,
-        active_rx_streams: Shared<AtomicUsize>,
+        rx_stream_active: Shared<AtomicBool>,
         cleanup_needed: Shared<AtomicBool>,
     ) -> Self {
         Self {
             session,
-            active_rx_streams,
+            rx_stream_active,
             cleanup_needed,
             iq_scratch: Vec::new(),
             active: false,
@@ -899,7 +899,7 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         if self.active {
             return Ok(());
         }
-        let claim = ActivationClaim::acquire(&self.active_rx_streams, &self.cleanup_needed)?;
+        let claim = ActivationClaim::acquire(&self.rx_stream_active, &self.cleanup_needed)?;
         let mut session = self.session.lock().await;
         cleanup_abandoned_session(&mut session, &self.cleanup_needed).await?;
         session
@@ -926,7 +926,7 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         };
         stream.stop().await.map_err(map_hydrasdr_error)?;
         self.cleanup_needed.store(false, Ordering::SeqCst);
-        self.active_rx_streams.store(0, Ordering::SeqCst);
+        self.rx_stream_active.store(false, Ordering::SeqCst);
         self.active = false;
         Ok(())
     }
@@ -969,7 +969,7 @@ impl Drop for AsyncHydraSdrRxStreamer {
     fn drop(&mut self) {
         if self.active {
             self.cleanup_needed.store(true, Ordering::SeqCst);
-            self.active_rx_streams.store(0, Ordering::SeqCst);
+            self.rx_stream_active.store(false, Ordering::SeqCst);
         }
         self.active = false;
     }
@@ -1082,27 +1082,27 @@ mod tests {
     #[cfg(any(feature = "smol", feature = "tokio"))]
     #[test]
     fn canceled_async_activation_releases_claim_and_requests_cleanup() {
-        let active = Shared::new(AtomicUsize::new(0));
+        let active = Shared::new(AtomicBool::new(false));
         let cleanup = Shared::new(AtomicBool::new(false));
 
         let claim = ActivationClaim::acquire(&active, &cleanup).expect("acquire stream claim");
-        assert_eq!(active.load(Ordering::SeqCst), 1);
+        assert!(active.load(Ordering::SeqCst));
         drop(claim);
 
-        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert!(!active.load(Ordering::SeqCst));
         assert!(cleanup.load(Ordering::SeqCst));
     }
 
     #[cfg(any(feature = "smol", feature = "tokio"))]
     #[test]
     fn committed_async_activation_keeps_exclusive_claim() {
-        let active = Shared::new(AtomicUsize::new(0));
+        let active = Shared::new(AtomicBool::new(false));
         let cleanup = Shared::new(AtomicBool::new(false));
 
         let claim = ActivationClaim::acquire(&active, &cleanup).expect("acquire stream claim");
         claim.commit();
 
-        assert_eq!(active.load(Ordering::SeqCst), 1);
+        assert!(active.load(Ordering::SeqCst));
         assert!(!cleanup.load(Ordering::SeqCst));
         assert!(matches!(
             ActivationClaim::acquire(&active, &cleanup),

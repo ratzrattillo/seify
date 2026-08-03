@@ -1,9 +1,10 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use hydrasdr_rs::{
-    DecimationMode, Device as HydraSdrDevice, GainConfig, GainPreset, MaybeFuture, SampleFormat,
+    DecimationMode, Device as HydraSdrDevice, F32RxStream, GainConfig, GainPreset, MaybeFuture,
+    RfPort, SampleFormat,
 };
 use num_complex::Complex32;
 
@@ -17,20 +18,124 @@ use crate::{
 /// HydraSDR RFOne device backend.
 #[derive(Clone)]
 pub struct HydraSdr {
-    dev: Arc<Mutex<Option<HydraSdrDevice>>>,
+    session: Arc<Mutex<SyncHydraSession>>,
     serial: Option<u64>,
     inner: Arc<Mutex<ReceiverState>>,
-    active_rx_streams: Arc<AtomicUsize>,
+    rx_stream_active: Arc<AtomicBool>,
 }
 /// HydraSDR RFOne receive streamer.
 pub struct RxStreamer {
-    dev: Arc<Mutex<Option<HydraSdrDevice>>>,
-    active_rx_streams: Arc<AtomicUsize>,
+    session: Arc<Mutex<SyncHydraSession>>,
+    rx_stream_active: Arc<AtomicBool>,
+    iq_scratch: Vec<(f32, f32)>,
     active: bool,
 }
 
 /// Placeholder transmit streamer for unsupported TX operations.
 pub struct TxDummy;
+
+enum SyncHydraSession {
+    Device(Box<HydraSdrDevice>),
+    Stream(Box<F32RxStream>),
+    Disconnected,
+}
+
+impl SyncHydraSession {
+    fn ensure_stream(&mut self) -> Result<&mut F32RxStream, Error> {
+        if matches!(self, Self::Device(_)) {
+            let Self::Device(device) = std::mem::replace(self, Self::Disconnected) else {
+                unreachable!();
+            };
+            *self = Self::Stream(Box::new((*device).into_f32_rx_stream()));
+        }
+        match self {
+            Self::Stream(stream) => Ok(stream),
+            Self::Disconnected => Err(Error::DeviceDisconnected),
+            Self::Device(_) => unreachable!(),
+        }
+    }
+
+    fn stop_stream(&mut self) -> Result<(), Error> {
+        if let Self::Stream(stream) = self {
+            stream.stop().map_err(map_hydrasdr_error)?;
+        }
+        Ok(())
+    }
+
+    fn set_frequency_hz(&mut self, frequency_hz: u64) -> Result<(), Error> {
+        match self {
+            Self::Device(device) => device.set_frequency_hz(frequency_hz).wait(),
+            Self::Stream(stream) => stream.set_frequency_hz(frequency_hz),
+            Self::Disconnected => return Err(Error::DeviceDisconnected),
+        }
+        .map_err(map_hydrasdr_error)
+    }
+
+    fn set_sample_rate_hz(&mut self, sample_rate_hz: u32) -> Result<(), Error> {
+        match self {
+            Self::Device(device) => device.set_sample_rate_hz(sample_rate_hz).wait(),
+            Self::Stream(stream) => stream.set_sample_rate_hz(sample_rate_hz),
+            Self::Disconnected => return Err(Error::DeviceDisconnected),
+        }
+        .map_err(map_hydrasdr_error)
+    }
+
+    fn set_bandwidth_hz(&mut self, bandwidth_hz: u32) -> Result<(), Error> {
+        match self {
+            Self::Device(device) => device.set_bandwidth_hz(bandwidth_hz).wait(),
+            Self::Stream(stream) => stream.set_bandwidth_hz(bandwidth_hz),
+            Self::Disconnected => return Err(Error::DeviceDisconnected),
+        }
+        .map_err(map_hydrasdr_error)
+    }
+
+    fn set_rf_port(&mut self, port: RfPort) -> Result<(), Error> {
+        match self {
+            Self::Device(device) => device.set_rf_port(port).wait(),
+            Self::Stream(stream) => stream.set_rf_port(port),
+            Self::Disconnected => return Err(Error::DeviceDisconnected),
+        }
+        .map_err(map_hydrasdr_error)
+    }
+
+    fn set_gain(&mut self, gain: GainConfig) -> Result<(), Error> {
+        match self {
+            Self::Device(device) => device.set_gain(gain).wait(),
+            Self::Stream(stream) => stream.set_gain(gain),
+            Self::Disconnected => return Err(Error::DeviceDisconnected),
+        }
+        .map_err(map_hydrasdr_error)
+    }
+}
+
+struct SyncActivationClaim {
+    rx_stream_active: Arc<AtomicBool>,
+    committed: bool,
+}
+
+impl SyncActivationClaim {
+    fn acquire(rx_stream_active: &Arc<AtomicBool>) -> Result<Self, Error> {
+        rx_stream_active
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .map_err(|_| Error::Busy)?;
+        Ok(Self {
+            rx_stream_active: Arc::clone(rx_stream_active),
+            committed: false,
+        })
+    }
+
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for SyncActivationClaim {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.rx_stream_active.store(false, Ordering::SeqCst);
+        }
+    }
+}
 
 impl HydraSdr {
     /// Return descriptors for detected HydraSDR RFOne devices.
@@ -54,19 +159,27 @@ impl HydraSdr {
         let receiver_state = ReceiverState::from_device_info(dev.info(), sample_rates, bandwidths);
 
         Ok(Self {
-            dev: Arc::new(Mutex::new(Some(dev))),
+            session: Arc::new(Mutex::new(SyncHydraSession::Device(Box::new(dev)))),
             serial,
             inner: Arc::new(Mutex::new(receiver_state)),
-            active_rx_streams: Arc::new(AtomicUsize::new(0)),
+            rx_stream_active: Arc::new(AtomicBool::new(false)),
         })
     }
 
     fn ensure_rx_config_idle(&self) -> Result<(), Error> {
-        if self.active_rx_streams.load(Ordering::SeqCst) == 0 {
+        if !self.rx_stream_active.load(Ordering::SeqCst) {
             Ok(())
         } else {
             Err(Error::Busy)
         }
+    }
+
+    fn lock_idle_session(&self) -> Result<MutexGuard<'_, SyncHydraSession>, Error> {
+        self.ensure_rx_config_idle()?;
+        let mut session = self.session.lock().unwrap();
+        self.ensure_rx_config_idle()?;
+        session.stop_stream()?;
+        Ok(session)
     }
 }
 
@@ -80,12 +193,7 @@ impl HydraSdr {
             return Ok(serial.to_string());
         }
 
-        let dev = self.dev.lock().unwrap();
-        let dev = dev.as_ref().ok_or(Error::DeviceDisconnected)?;
-        dev.info()
-            .serial
-            .map(|serial| serial.to_string())
-            .ok_or_else(|| Error::unsupported(Capability::DeviceId))
+        Err(Error::unsupported(Capability::DeviceId))
     }
 
     fn info(&self) -> Result<Args, Error> {
@@ -127,12 +235,7 @@ impl HydraSdr {
             "invalid HydraSDR argument",
         ))?;
         {
-            let mut dev = self.dev.lock().unwrap();
-            dev.as_mut()
-                .ok_or(Error::DeviceDisconnected)?
-                .set_rf_port(port)
-                .wait()
-                .map_err(map_hydrasdr_error)?;
+            self.lock_idle_session()?.set_rf_port(port)?;
         }
         self.inner.lock().unwrap().antenna = name;
         Ok(())
@@ -159,12 +262,7 @@ impl HydraSdr {
             mixer_agc: Some(agc),
         };
         {
-            let mut dev = self.dev.lock().unwrap();
-            dev.as_mut()
-                .ok_or(Error::DeviceDisconnected)?
-                .set_gain(gain)
-                .wait()
-                .map_err(map_hydrasdr_error)?;
+            self.lock_idle_session()?.set_gain(gain)?;
         }
         let mut inner = self.inner.lock().unwrap();
         inner.agc = agc;
@@ -247,12 +345,7 @@ impl HydraSdr {
         };
         self.ensure_rx_config_idle()?;
         {
-            let mut dev = self.dev.lock().unwrap();
-            dev.as_mut()
-                .ok_or(Error::DeviceDisconnected)?
-                .set_gain(gain_update)
-                .wait()
-                .map_err(map_hydrasdr_error)?;
+            self.lock_idle_session()?.set_gain(gain_update)?;
         }
         let mut inner = self.inner.lock().unwrap();
         if let Some(cached) = inner
@@ -402,12 +495,8 @@ impl HydraSdr {
         }
         self.ensure_rx_config_idle()?;
         {
-            let mut dev = self.dev.lock().unwrap();
-            dev.as_mut()
-                .ok_or(Error::DeviceDisconnected)?
-                .set_frequency_hz(frequency as u64)
-                .wait()
-                .map_err(map_hydrasdr_error)?;
+            self.lock_idle_session()?
+                .set_frequency_hz(frequency as u64)?;
         }
         self.inner.lock().unwrap().frequency = Some(frequency);
         Ok(())
@@ -434,12 +523,7 @@ impl HydraSdr {
         }
         self.ensure_rx_config_idle()?;
         {
-            let mut dev = self.dev.lock().unwrap();
-            dev.as_mut()
-                .ok_or(Error::DeviceDisconnected)?
-                .set_sample_rate_hz(rate as u32)
-                .wait()
-                .map_err(map_hydrasdr_error)?;
+            self.lock_idle_session()?.set_sample_rate_hz(rate as u32)?;
         }
         self.inner.lock().unwrap().sample_rate = Some(rate);
         Ok(())
@@ -479,12 +563,7 @@ impl HydraSdr {
         }
         self.ensure_rx_config_idle()?;
         {
-            let mut dev = self.dev.lock().unwrap();
-            dev.as_mut()
-                .ok_or(Error::DeviceDisconnected)?
-                .set_bandwidth_hz(bw as u32)
-                .wait()
-                .map_err(map_hydrasdr_error)?;
+            self.lock_idle_session()?.set_bandwidth_hz(bw as u32)?;
         }
         self.inner.lock().unwrap().bandwidth = Some(bw);
         Ok(())
@@ -536,8 +615,8 @@ impl RxDevice for HydraSdr {
         }
         self.ensure_rx_config_idle()?;
         Ok(RxStreamer::new(
-            Arc::clone(&self.dev),
-            Arc::clone(&self.active_rx_streams),
+            Arc::clone(&self.session),
+            Arc::clone(&self.rx_stream_active),
         ))
     }
 }
@@ -711,10 +790,11 @@ impl BandwidthControl for HydraSdr {
 }
 
 impl RxStreamer {
-    fn new(dev: Arc<Mutex<Option<HydraSdrDevice>>>, active_rx_streams: Arc<AtomicUsize>) -> Self {
+    fn new(session: Arc<Mutex<SyncHydraSession>>, rx_stream_active: Arc<AtomicBool>) -> Self {
         Self {
-            dev,
-            active_rx_streams,
+            session,
+            rx_stream_active,
+            iq_scratch: Vec::new(),
             active: false,
         }
     }
@@ -732,11 +812,14 @@ impl crate::RxStreamer for RxStreamer {
         if self.active {
             return Ok(());
         }
-        if self.dev.lock().unwrap().is_none() {
-            return Err(Error::DeviceDisconnected);
-        }
+        let claim = SyncActivationClaim::acquire(&self.rx_stream_active)?;
+        let mut session = self.session.lock().unwrap();
+        session
+            .ensure_stream()?
+            .start()
+            .map_err(map_hydrasdr_error)?;
         self.active = true;
-        self.active_rx_streams.fetch_add(1, Ordering::SeqCst);
+        claim.commit();
         Ok(())
     }
 
@@ -745,9 +828,9 @@ impl crate::RxStreamer for RxStreamer {
             return Err(Error::unsupported(Capability::TimedDeactivation));
         }
         if self.active {
+            self.session.lock().unwrap().stop_stream()?;
             self.active = false;
-            let previous = self.active_rx_streams.fetch_sub(1, Ordering::SeqCst);
-            debug_assert!(previous > 0);
+            self.rx_stream_active.store(false, Ordering::SeqCst);
         }
         Ok(())
     }
@@ -767,13 +850,17 @@ impl crate::RxStreamer for RxStreamer {
         } else {
             Duration::from_micros(timeout_us as u64)
         };
-        let mut dev = self.dev.lock().unwrap();
-        let device = dev.as_mut().ok_or(Error::DeviceDisconnected)?;
-        let mut stream = device.f32_rx_stream().map_err(map_hydrasdr_error)?;
-        let mut iq = vec![(0.0, 0.0); out.len()];
-        let read = stream.read(&mut iq, timeout).map_err(map_hydrasdr_error)?;
-        stream.finish().map_err(map_hydrasdr_error)?;
-        for (dst, (i, q)) in out.iter_mut().take(read).zip(iq) {
+        self.iq_scratch.resize(out.len(), (0.0, 0.0));
+        let mut session = self.session.lock().unwrap();
+        let read = session
+            .ensure_stream()?
+            .read(&mut self.iq_scratch, timeout)
+            .map_err(map_hydrasdr_error)?;
+        for (dst, (i, q)) in out
+            .iter_mut()
+            .take(read)
+            .zip(self.iq_scratch.iter().copied())
+        {
             *dst = Complex32::new(i, q);
         }
         Ok(read)
@@ -783,6 +870,10 @@ impl crate::RxStreamer for RxStreamer {
 impl Drop for RxStreamer {
     fn drop(&mut self) {
         let _ = <Self as crate::RxStreamer>::deactivate_at(self, None);
+        if self.active {
+            self.rx_stream_active.store(false, Ordering::SeqCst);
+            self.active = false;
+        }
     }
 }
 
@@ -869,5 +960,34 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
                 Err(Error::DeviceNotFound)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synchronous_activation_claim_is_exclusive() {
+        let active = Arc::new(AtomicBool::new(false));
+        let claim = SyncActivationClaim::acquire(&active).expect("acquire stream claim");
+
+        assert!(active.load(Ordering::SeqCst));
+        assert!(matches!(
+            SyncActivationClaim::acquire(&active),
+            Err(Error::Busy)
+        ));
+
+        claim.commit();
+        assert!(active.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn abandoned_synchronous_activation_releases_claim() {
+        let active = Arc::new(AtomicBool::new(false));
+        let claim = SyncActivationClaim::acquire(&active).expect("acquire stream claim");
+        drop(claim);
+
+        assert!(!active.load(Ordering::SeqCst));
     }
 }
