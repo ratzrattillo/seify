@@ -15,7 +15,9 @@
 //! enable exactly one of `smol` or `tokio` for runtime integration. For example,
 //! native HydraSDR async support combines `hydrasdr` with either runtime. On
 //! `wasm32-unknown-unknown`, `hydrasdr` uses WebUSB without a runtime feature and
-//! only its async Seify backend is available.
+//! only its async Seify backend is available. A worker-based WebUSB application
+//! should call `AsyncRegistry::request_permission` from a browser-window user
+//! gesture, then probe or open the authorized device inside its worker.
 //!
 //! Native Rust drivers are still experimental. For production use and the
 //! widest set of stable hardware integrations, prefer the SoapySDR backend.
@@ -151,6 +153,8 @@ pub mod dev {
     pub use crate::async_device::DynAsyncSampleRateControl;
     pub use crate::async_device::DynAsyncTxDevice;
     pub use crate::async_registry::AsyncTypedDeviceBackend;
+    #[cfg(target_arch = "wasm32")]
+    pub use crate::async_registry::WebUsbDeviceFilter;
     pub use crate::async_streamer::DynAsyncRxStreamerBackend;
     pub use crate::async_streamer::DynAsyncTxStreamerBackend;
     pub use crate::device::DynDeviceBackend;

@@ -9,6 +9,8 @@ use hydrasdr_rs::{
 use num_complex::Complex32;
 
 use super::common::*;
+#[cfg(target_arch = "wasm32")]
+use crate::dev::WebUsbDeviceFilter;
 use crate::Direction::*;
 use crate::{
     async_compat::{timeout_from_micros, with_timeout, TimeoutResult},
@@ -1005,6 +1007,25 @@ async fn read_async_f32_stream(
 impl AsyncTypedDeviceBackend for AsyncHydraSdr {
     fn driver() -> Driver {
         Driver::HydraSdr
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn webusb_filters(args: &Args) -> Result<Vec<WebUsbDeviceFilter>, Error> {
+        let serial = match device_selector(args)? {
+            DeviceSelector::Serial(serial) => Some(format!("HYDRASDR SN:{serial:016X}")),
+            DeviceSelector::First | DeviceSelector::Index(_) => None,
+        };
+        Ok([(0x1d50, 0x60a1), (0x38af, 0x0001)]
+            .into_iter()
+            .map(|(vendor_id, product_id)| {
+                let filter = WebUsbDeviceFilter::new().with_vendor_product(vendor_id, product_id);
+                if let Some(serial) = &serial {
+                    filter.with_serial_number(serial.clone())
+                } else {
+                    filter
+                }
+            })
+            .collect())
     }
 
     async fn async_probe(args: &Args) -> Result<Vec<Args>, Error> {

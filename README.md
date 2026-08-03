@@ -63,8 +63,10 @@ WebUSB's `web-sys` bindings require `--cfg=web_sys_unstable_apis`; this
 repository supplies it for `wasm32-unknown-unknown` in `.cargo/config.toml`.
 Applications consuming Seify as a dependency must add the same target setting
 to their own Cargo configuration. A browser only probes HydraSDRs already
-authorized for the page. Opening the async HydraSDR backend requests permission
-when necessary, so the first open must run from a browser user gesture.
+authorized for the page. Call `AsyncRegistry::request_permission` from a browser
+user gesture, then probe or open the authorized device in the window or a Web
+Worker. Without a `driver` argument, the chooser includes devices supported by
+all registered WebUSB backends. Opening itself never displays the chooser.
 
 A framework-free, driver-agnostic browser example with discovered receiver
 controls and a finite-capture magnitude plot lives in `examples/webusb`. Run it

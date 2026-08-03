@@ -47,6 +47,14 @@ ureq = { version = "3.3", features = ["json"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-timers = { version = "0.4", features = ["futures"] }
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "Navigator",
+    "Usb",
+    "UsbDeviceFilter",
+    "UsbDeviceRequestOptions",
+    "Window",
+] }
 
 [dev-dependencies]
 clap = { version = "4.6", features = ["derive"] }
