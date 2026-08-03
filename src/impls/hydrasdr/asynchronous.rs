@@ -152,7 +152,7 @@ async fn cleanup_abandoned_session(
         return Ok(());
     }
     if let AsyncHydraSession::Stream(stream) = session {
-        stream.finish().await.map_err(map_hydrasdr_error)?;
+        stream.stop().await.map_err(map_hydrasdr_error)?;
     }
     cleanup_needed.store(false, Ordering::SeqCst);
     Ok(())
@@ -938,7 +938,7 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         let AsyncHydraSession::Stream(stream) = &mut *session else {
             return Err(Error::DeviceDisconnected);
         };
-        stream.finish().await.map_err(map_hydrasdr_error)?;
+        stream.stop().await.map_err(map_hydrasdr_error)?;
         self.cleanup_needed.store(false, Ordering::SeqCst);
         self.active_rx_streams.store(0, Ordering::SeqCst);
         self.active = false;
