@@ -2,9 +2,9 @@
 
 mod common;
 
-#[cfg(any(feature = "smol", feature = "tokio"))]
+#[cfg(any(target_arch = "wasm32", feature = "smol", feature = "tokio"))]
 mod asynchronous;
-#[cfg(any(feature = "smol", feature = "tokio"))]
+#[cfg(any(target_arch = "wasm32", feature = "smol", feature = "tokio"))]
 pub use asynchronous::{AsyncHydraSdr, AsyncHydraSdrRxStreamer};
 
 #[cfg(not(target_arch = "wasm32"))]

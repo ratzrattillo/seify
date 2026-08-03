@@ -188,15 +188,14 @@ impl Default for AsyncRegistry {
         #[allow(unused_mut)]
         let mut registry = Self::empty();
 
-        #[cfg(feature = "dummy")]
-        registry.register::<crate::impls::Dummy>();
-
         #[cfg(all(
             feature = "hydrasdr",
-            any(feature = "smol", feature = "tokio"),
-            not(target_arch = "wasm32")
+            any(target_arch = "wasm32", feature = "smol", feature = "tokio")
         ))]
         registry.register::<crate::impls::AsyncHydraSdr>();
+
+        #[cfg(feature = "dummy")]
+        registry.register::<crate::impls::Dummy>();
 
         registry
     }
@@ -220,6 +219,27 @@ fn unavailable_driver(driver: Driver) -> Error {
         )
     } else {
         Error::DriverFeatureNotEnabled { driver }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "dummy",
+    feature = "hydrasdr",
+    any(target_arch = "wasm32", feature = "smol", feature = "tokio")
+))]
+mod ordering_tests {
+    use super::*;
+
+    #[test]
+    fn hydrasdr_precedes_the_dummy_fallback() {
+        let drivers = AsyncRegistry::default()
+            .backends
+            .iter()
+            .map(RegisteredAsyncDriver::driver)
+            .collect::<Vec<_>>();
+
+        assert_eq!(drivers, [Driver::HydraSdr, Driver::Dummy]);
     }
 }
 

@@ -6,7 +6,7 @@ use crate::Error;
     all(feature = "aaronia_http", not(target_arch = "wasm32")),
     all(feature = "bladerf1", not(target_arch = "wasm32")),
     all(feature = "hackrfone", not(target_arch = "wasm32")),
-    all(feature = "hydrasdr", not(target_arch = "wasm32")),
+    feature = "hydrasdr",
     all(feature = "rtlsdr", not(target_arch = "wasm32")),
 ))]
 pub(crate) fn expect_buffer_count(actual: usize, expected: usize) -> Result<(), Error> {

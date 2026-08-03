@@ -37,14 +37,34 @@ Available features:
 | `aaronia_http` | `driver=aaronia_http` | Aaronia HTTP backend. |
 | `bladerf1` | `driver=bladerf` | bladeRF 1 backend. |
 | `hackrfone` | `driver=hackrfone` | HackRF One backend. |
-| `hydrasdr` | `driver=hydrasdr` | HydraSDR backend. |
+| `hydrasdr` | `driver=hydrasdr` | HydraSDR backend; async WebUSB support on `wasm32-unknown-unknown`. |
 | `rtlsdr` | `driver=rtlsdr` | RTL-SDR backend. |
 | `smol` / `tokio` | n/a | Pick one for async `nusb` runtime integration. |
 
-For async use with `nusb`-based drivers, enable exactly one of `smol` or
-`tokio`. For example, HydraSDR async support is enabled with `hydrasdr,smol` or
-`hydrasdr,tokio`; if Cargo feature unification enables both runtimes, `nusb`
-uses its `smol` blocking-task adapter.
+For native async use with `nusb`-based drivers, enable exactly one of `smol` or
+`tokio`. For example, native HydraSDR async support is enabled with
+`hydrasdr,smol` or `hydrasdr,tokio`. WebAssembly uses WebUSB and needs only the
+`hydrasdr` feature.
+
+## WebUSB
+
+HydraSDR is the first Seify hardware driver available on
+`wasm32-unknown-unknown`. Only `AsyncHydraSdr`, `AsyncRegistry`, and the async
+device/streamer APIs are connected to that driver on wasm; the synchronous
+HydraSDR backend remains native-only.
+
+Build it with:
+
+```bash
+cargo check --target wasm32-unknown-unknown --no-default-features --features hydrasdr
+```
+
+WebUSB's `web-sys` bindings require `--cfg=web_sys_unstable_apis`; this
+repository supplies it for `wasm32-unknown-unknown` in `.cargo/config.toml`.
+Applications consuming Seify as a dependency must add the same target setting
+to their own Cargo configuration. A browser only probes HydraSDRs already
+authorized for the page. Opening the async HydraSDR backend requests permission
+when necessary, so the first open must run from a browser user gesture.
 
 Use the generic API with an argument string to select a backend at runtime:
 

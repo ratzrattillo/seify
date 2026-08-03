@@ -11,11 +11,11 @@
 //! The default feature set enables the `soapy` backend. Other backends are
 //! enabled with Cargo features such as `rtlsdr`, `hackrfone`, `hydrasdr`,
 //! `bladerf1`, `aaronia_http`, and `dummy`.
-//! Async applications that use `nusb`-based drivers should enable exactly one
-//! of `smol` or `tokio` for runtime integration. For example, HydraSDR async
-//! support is enabled by combining `hydrasdr` with either `smol` or `tokio`. If
-//! Cargo feature unification enables both runtimes, `nusb` uses its `smol`
-//! blocking-task adapter.
+//! Async applications that use `nusb`-based drivers on native targets should
+//! enable exactly one of `smol` or `tokio` for runtime integration. For example,
+//! native HydraSDR async support combines `hydrasdr` with either runtime. On
+//! `wasm32-unknown-unknown`, `hydrasdr` uses WebUSB without a runtime feature and
+//! only its async Seify backend is available.
 //!
 //! Native Rust drivers are still experimental. For production use and the
 //! widest set of stable hardware integrations, prefer the SoapySDR backend.
@@ -218,7 +218,7 @@ pub enum DriverError {
     #[error("Hackrf ({0})")]
     /// Error returned by the HackRF One backend.
     HackRfOne(seify_hackrfone::Error),
-    #[cfg(all(feature = "hydrasdr", not(target_arch = "wasm32")))]
+    #[cfg(feature = "hydrasdr")]
     #[error("HydraSdr ({0})")]
     /// Error returned by the HydraSDR backend.
     HydraSdr(hydrasdr_rs::Error),
@@ -406,7 +406,7 @@ impl From<seify_hackrfone::Error> for Error {
     }
 }
 
-#[cfg(all(feature = "hydrasdr", not(target_arch = "wasm32")))]
+#[cfg(feature = "hydrasdr")]
 impl From<hydrasdr_rs::Error> for Error {
     fn from(value: hydrasdr_rs::Error) -> Self {
         Error::Driver(DriverError::HydraSdr(value))

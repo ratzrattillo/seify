@@ -32,12 +32,11 @@ pub mod hackrfone;
 #[cfg(all(feature = "hackrfone", not(target_arch = "wasm32")))]
 pub use hackrfone::HackRfOne;
 
-#[cfg(all(feature = "hydrasdr", not(target_arch = "wasm32")))]
+#[cfg(feature = "hydrasdr")]
 pub mod hydrasdr;
 #[cfg(all(
     feature = "hydrasdr",
-    any(feature = "smol", feature = "tokio"),
-    not(target_arch = "wasm32")
+    any(target_arch = "wasm32", feature = "smol", feature = "tokio")
 ))]
 pub use hydrasdr::AsyncHydraSdr;
 #[cfg(all(feature = "hydrasdr", not(target_arch = "wasm32")))]

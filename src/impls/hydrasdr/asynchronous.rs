@@ -29,6 +29,11 @@ pub struct AsyncHydraSdr {
 }
 
 /// HydraSDR RFOne asynchronous receive streamer.
+///
+/// Activation uses one shared owned HydraSDR stream and persistent USB queue. Explicit
+/// deactivation performs receiver-off cleanup. Dropping an active streamer leaves the session
+/// available for cleanup by the next asynchronous device or stream operation.
+#[must_use = "deactivate the HydraSDR stream before dropping it"]
 pub struct AsyncHydraSdrRxStreamer {
     session: Arc<AsyncMutex<AsyncHydraSession>>,
     active_rx_streams: Arc<AtomicUsize>,
