@@ -318,7 +318,7 @@ impl HydraSdr {
             self.lock_idle_session()?.set_gain(gain_update)?;
         }
         let mut inner = self.inner.lock().unwrap();
-        inner.set_gain_cached(gain_type, gain, gain_update);
+        inner.set_gain_cached(gain_type, gain);
         Ok(())
     }
 

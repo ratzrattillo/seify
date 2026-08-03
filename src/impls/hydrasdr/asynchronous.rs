@@ -348,7 +348,7 @@ impl AsyncHydraSdr {
         let mut session = self.lock_idle_session().await?;
         session.set_gain(gain_update).await?;
         let mut inner = self.inner.lock().await;
-        inner.set_gain_cached(gain_type, gain, gain_update);
+        inner.set_gain_cached(gain_type, gain);
         Ok(())
     }
 

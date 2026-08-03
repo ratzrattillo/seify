@@ -15,7 +15,6 @@ pub(super) struct ReceiverState {
     pub(super) sample_rates: Vec<u32>,
     pub(super) bandwidths: Vec<u32>,
     pub(super) gains: Vec<GainCache>,
-    pub(super) gain_config: GainConfig,
     pub(super) agc: bool,
     pub(super) min_frequency: f64,
     pub(super) max_frequency: f64,
@@ -63,7 +62,6 @@ impl ReceiverState {
             sample_rates,
             bandwidths,
             gains: default_gain_cache(),
-            gain_config: GainConfig::Unchanged,
             agc: false,
             min_frequency: info.min_frequency as f64,
             max_frequency: info.max_frequency as f64,
@@ -72,10 +70,9 @@ impl ReceiverState {
 
     pub(super) fn set_agc_cached(&mut self, agc: bool) {
         self.agc = agc;
-        self.gain_config = self.manual_gain_config();
     }
 
-    pub(super) fn set_gain_cached(&mut self, gain_type: GainType, value: f64, update: GainConfig) {
+    pub(super) fn set_gain_cached(&mut self, gain_type: GainType, value: f64) {
         if let Some(cached) = self
             .gains
             .iter_mut()
@@ -83,10 +80,6 @@ impl ReceiverState {
         {
             cached.value = value;
         }
-        self.gain_config = match gain_type {
-            GainType::Linearity | GainType::Sensitivity => update,
-            GainType::Lna | GainType::Mixer | GainType::Vga => self.manual_gain_config(),
-        };
     }
 
     pub(super) fn gain_value(&self, gain_type: GainType) -> Option<f64> {
@@ -101,20 +94,6 @@ impl ReceiverState {
             .iter()
             .find(|cached| cached.gain_type == gain_type)
             .map(|cached| cached.range.clone())
-    }
-
-    fn manual_gain_config(&self) -> GainConfig {
-        GainConfig::Manual {
-            lna: self.cached_gain_value(GainType::Lna),
-            mixer: self.cached_gain_value(GainType::Mixer),
-            vga: self.cached_gain_value(GainType::Vga),
-            lna_agc: Some(self.agc),
-            mixer_agc: Some(self.agc),
-        }
-    }
-
-    fn cached_gain_value(&self, gain_type: GainType) -> Option<u8> {
-        self.gain_value(gain_type).map(|gain| gain.round() as u8)
     }
 }
 
