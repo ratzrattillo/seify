@@ -63,6 +63,7 @@ unsafe impl Sync for AsyncHydraSdr {}
 pub struct AsyncHydraSdrRxStreamer {
     dev: Arc<AsyncMutex<Option<HydraSdrDevice>>>,
     active_rx_streams: Arc<AtomicUsize>,
+    stream: Option<AsyncF32RxStream>,
     active: bool,
 }
 
@@ -1636,6 +1637,7 @@ impl AsyncHydraSdrRxStreamer {
         Self {
             dev,
             active_rx_streams,
+            stream: None,
             active: false,
         }
     }
@@ -1654,11 +1656,35 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         if self.active {
             return Ok(());
         }
-        if self.dev.lock().await.is_none() {
-            return Err(Error::DeviceDisconnected);
+        if self.stream.is_none() {
+            let mut dev = self.dev.lock().await;
+            let device = match dev.take() {
+                Some(device) => device,
+                None if self.active_rx_streams.load(Ordering::SeqCst) != 0 => {
+                    return Err(Error::Busy);
+                }
+                None => return Err(Error::DeviceDisconnected),
+            };
+            self.active_rx_streams.fetch_add(1, Ordering::SeqCst);
+            self.stream = Some(device.into_async_f32_rx_stream());
+        }
+        let start_result = self
+            .stream
+            .as_mut()
+            .expect("owned HydraSDR stream is present")
+            .start()
+            .await;
+        if let Err(error) = start_result {
+            let mut dev = self.dev.lock().await;
+            let stream = self
+                .stream
+                .take()
+                .expect("owned HydraSDR stream is present");
+            *dev = Some(stream.into_device());
+            self.active_rx_streams.fetch_sub(1, Ordering::SeqCst);
+            return Err(map_hydrasdr_error(error));
         }
         self.active = true;
-        self.active_rx_streams.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -1666,9 +1692,17 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         if time_ns.is_some() {
             return Err(Error::unsupported(Capability::TimedDeactivation));
         }
-        if self.active {
-            self.active = false;
+        if let Some(stream) = self.stream.as_mut() {
+            let finish_result = stream.finish().await.map_err(map_hydrasdr_error);
+            let mut dev = self.dev.lock().await;
+            let stream = self
+                .stream
+                .take()
+                .expect("owned HydraSDR stream is present");
+            *dev = Some(stream.into_device());
             self.active_rx_streams.fetch_sub(1, Ordering::SeqCst);
+            self.active = false;
+            finish_result?;
         }
         Ok(())
     }
@@ -1687,17 +1721,12 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         }
 
         let out = &mut buffers[0];
-        let mut dev = self.dev.lock().await;
-        let device = dev.as_mut().ok_or(Error::DeviceDisconnected)?;
-        let mut stream = device
-            .f32_rx_stream_async()
-            .await
-            .map_err(map_hydrasdr_error)?;
+        let stream = self.stream.as_mut().ok_or(Error::DeviceDisconnected)?;
         // One MTU maps to one HydraSDR USB completion; keeping this read to one
         // completion makes timing out the wait cancellation-safe.
         let read_len = out.len().min(MTU);
         let read = match with_timeout(
-            read_async_f32_stream(&mut stream, &mut out[..read_len]),
+            read_async_f32_stream(stream, &mut out[..read_len]),
             timeout_from_micros(timeout_us),
         )
         .await
@@ -1705,7 +1734,6 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
             TimeoutResult::Completed(read) => read?,
             TimeoutResult::TimedOut => 0,
         };
-        stream.finish().await.map_err(map_hydrasdr_error)?;
         Ok(read)
     }
 }
@@ -1713,16 +1741,16 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
 #[cfg(any(feature = "smol", feature = "tokio"))]
 impl Drop for AsyncHydraSdrRxStreamer {
     fn drop(&mut self) {
-        if self.active {
+        if self.stream.is_some() {
             self.active_rx_streams.fetch_sub(1, Ordering::SeqCst);
-            self.active = false;
         }
+        self.active = false;
     }
 }
 
 #[cfg(any(feature = "smol", feature = "tokio"))]
 async fn read_async_f32_stream(
-    stream: &mut AsyncF32RxStream<'_>,
+    stream: &mut AsyncF32RxStream,
     out: &mut [Complex32],
 ) -> Result<usize, Error> {
     let mut iq = vec![(0.0, 0.0); out.len()];
