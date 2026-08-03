@@ -56,6 +56,7 @@ pub struct AsyncHydraSdrRxStreamer {
     dev: Arc<AsyncMutex<Option<HydraSdrDevice>>>,
     active_rx_streams: Arc<AtomicUsize>,
     stream: Option<AsyncF32RxStream>,
+    iq_scratch: Vec<(f32, f32)>,
     active: bool,
 }
 
@@ -1624,6 +1625,7 @@ impl AsyncHydraSdrRxStreamer {
             dev,
             active_rx_streams,
             stream: None,
+            iq_scratch: Vec::new(),
             active: false,
         }
     }
@@ -1712,7 +1714,7 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         // completion makes timing out the wait cancellation-safe.
         let read_len = out.len().min(MTU);
         let read = match with_timeout(
-            read_async_f32_stream(stream, &mut out[..read_len]),
+            read_async_f32_stream(stream, &mut out[..read_len], &mut self.iq_scratch),
             timeout_from_micros(timeout_us),
         )
         .await
@@ -1738,10 +1740,11 @@ impl Drop for AsyncHydraSdrRxStreamer {
 async fn read_async_f32_stream(
     stream: &mut AsyncF32RxStream,
     out: &mut [Complex32],
+    iq_scratch: &mut Vec<(f32, f32)>,
 ) -> Result<usize, Error> {
-    let mut iq = vec![(0.0, 0.0); out.len()];
-    let read = stream.read(&mut iq).await.map_err(map_hydrasdr_error)?;
-    for (dst, (i, q)) in out.iter_mut().take(read).zip(iq) {
+    iq_scratch.resize(out.len(), (0.0, 0.0));
+    let read = stream.read(iq_scratch).await.map_err(map_hydrasdr_error)?;
+    for (dst, (i, q)) in out.iter_mut().take(read).zip(iq_scratch.iter().copied()) {
         *dst = Complex32::new(i, q);
     }
     Ok(read)
