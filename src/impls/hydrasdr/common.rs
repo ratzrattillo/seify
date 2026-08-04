@@ -381,7 +381,6 @@ mod tests {
                 min_frequency: 24_000_000,
                 max_frequency: 1_800_000_000,
                 has_bias_tee: true,
-                bias_tee: None,
             }],
         };
 
@@ -402,7 +401,6 @@ mod tests {
                     min_frequency: 24_000_000,
                     max_frequency: 500_000_000,
                     has_bias_tee: false,
-                    bias_tee: None,
                 },
                 RfPortInfo {
                     port: RfPort::Rx1,
@@ -410,7 +408,6 @@ mod tests {
                     min_frequency: 1_000_000_000,
                     max_frequency: 1_800_000_000,
                     has_bias_tee: false,
-                    bias_tee: None,
                 },
             ],
         };
