@@ -3,8 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hydrasdr_rs::{
-    DecimationMode, Device as HydraSdrDevice, F32RxStream, GainConfig, MaybeFuture, RfPort,
-    SampleFormat,
+    DecimationMode, Device as HydraSdrDevice, GainConfig, MaybeFuture, RfPort, RxStream,
 };
 use num_complex::Complex32;
 
@@ -37,17 +36,17 @@ pub struct RxStreamer {
 
 enum SyncHydraSession {
     Device(Box<HydraSdrDevice>),
-    Stream(Box<F32RxStream>),
+    Stream(Box<RxStream>),
     Disconnected,
 }
 
 impl SyncHydraSession {
-    fn ensure_stream(&mut self) -> Result<&mut F32RxStream, Error> {
+    fn ensure_stream(&mut self) -> Result<&mut RxStream, Error> {
         if matches!(self, Self::Device(_)) {
             let Self::Device(device) = std::mem::replace(self, Self::Disconnected) else {
                 unreachable!();
             };
-            *self = Self::Stream(Box::new((*device).into_f32_rx_stream()));
+            *self = Self::Stream(Box::new((*device).into_rx_stream()));
         }
         match self {
             Self::Stream(stream) => Ok(stream),
@@ -58,45 +57,55 @@ impl SyncHydraSession {
 
     fn stop_stream(&mut self) -> Result<(), Error> {
         if let Self::Stream(stream) = self {
-            stream.stop().map_err(map_hydrasdr_error)?;
+            stream
+                .stop()
+                .wait()
+                .map(|_| ())
+                .map_err(map_hydrasdr_error)?;
         }
         Ok(())
     }
 
-    fn set_frequency_hz(&mut self, frequency_hz: u64) -> Result<(), Error> {
-        match self {
-            Self::Device(device) => device.set_frequency_hz(frequency_hz).wait(),
-            Self::Stream(stream) => stream.set_frequency_hz(frequency_hz),
-            Self::Disconnected => return Err(Error::DeviceDisconnected),
+    fn ensure_device(&mut self) -> Result<&mut HydraSdrDevice, Error> {
+        if matches!(self, Self::Stream(_)) {
+            let Self::Stream(stream) = std::mem::replace(self, Self::Disconnected) else {
+                unreachable!();
+            };
+            *self = Self::Device(Box::new((*stream).into_device()));
         }
-        .map_err(map_hydrasdr_error)
+        match self {
+            Self::Device(device) => Ok(device),
+            Self::Disconnected => Err(Error::DeviceDisconnected),
+            Self::Stream(_) => unreachable!(),
+        }
+    }
+
+    fn set_frequency_hz(&mut self, frequency_hz: u64) -> Result<(), Error> {
+        self.ensure_device()?
+            .set_frequency_hz(frequency_hz)
+            .wait()
+            .map_err(map_hydrasdr_error)
     }
 
     fn set_sample_rate_hz(&mut self, sample_rate_hz: u32) -> Result<(), Error> {
-        match self {
-            Self::Device(device) => device.set_sample_rate_hz(sample_rate_hz).wait(),
-            Self::Stream(stream) => stream.set_sample_rate_hz(sample_rate_hz),
-            Self::Disconnected => return Err(Error::DeviceDisconnected),
-        }
-        .map_err(map_hydrasdr_error)
+        self.ensure_device()?
+            .set_sample_rate_hz(sample_rate_hz)
+            .wait()
+            .map_err(map_hydrasdr_error)
     }
 
     fn set_rf_port(&mut self, port: RfPort) -> Result<(), Error> {
-        match self {
-            Self::Device(device) => device.set_rf_port(port).wait(),
-            Self::Stream(stream) => stream.set_rf_port(port),
-            Self::Disconnected => return Err(Error::DeviceDisconnected),
-        }
-        .map_err(map_hydrasdr_error)
+        self.ensure_device()?
+            .set_rf_port(port)
+            .wait()
+            .map_err(map_hydrasdr_error)
     }
 
     fn set_gain(&mut self, gain: GainConfig) -> Result<(), Error> {
-        match self {
-            Self::Device(device) => device.set_gain(gain).wait(),
-            Self::Stream(stream) => stream.set_gain(gain),
-            Self::Disconnected => return Err(Error::DeviceDisconnected),
-        }
-        .map_err(map_hydrasdr_error)
+        self.ensure_device()?
+            .set_gain(gain)
+            .wait()
+            .map_err(map_hydrasdr_error)
     }
 }
 
@@ -711,6 +720,7 @@ impl crate::RxStreamer for RxStreamer {
             .ok_or(Error::DeviceDisconnected)?
             .ensure_stream()?
             .start()
+            .wait()
             .map_err(map_hydrasdr_error)?;
         self.active = true;
         Ok(())
@@ -744,6 +754,7 @@ impl crate::RxStreamer for RxStreamer {
             .ok_or(Error::DeviceDisconnected)?
             .ensure_stream()?
             .read(&mut out[..read_len], timeout)
+            .wait()
             .map_err(map_hydrasdr_error)
     }
 }
@@ -765,7 +776,6 @@ impl Drop for RxStreamer {
 fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Option<u64>), Error> {
     match selector {
         DeviceSelector::First => HydraSdrDevice::builder()
-            .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
             .open()
             .wait()
@@ -776,7 +786,6 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
             .map_err(map_hydrasdr_error),
         DeviceSelector::Serial(serial) => HydraSdrDevice::builder()
             .serial(serial)
-            .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
             .open()
             .wait()
@@ -790,7 +799,6 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
             if let Some(serial) = info.serial {
                 HydraSdrDevice::builder()
                     .serial(serial)
-                    .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
                     .open()
                     .wait()
@@ -798,7 +806,6 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
                     .map_err(map_hydrasdr_error)
             } else if index == 0 {
                 HydraSdrDevice::builder()
-                    .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
                     .open()
                     .wait()

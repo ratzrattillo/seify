@@ -1,8 +1,8 @@
+use std::future::IntoFuture;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use hydrasdr_rs::{
-    AsyncF32RxStream, DecimationMode, Device as HydraSdrDevice, GainConfig, RfPort, SampleFormat,
-};
+use hydrasdr_rs::{DecimationMode, Device as HydraSdrDevice, GainConfig, RfPort, RxStream};
 use num_complex::Complex32;
 
 use super::common::*;
@@ -45,17 +45,17 @@ pub struct AsyncHydraSdrRxStreamer {
 
 enum AsyncHydraSession {
     Device(Box<HydraSdrDevice>),
-    Stream(Box<AsyncF32RxStream>),
+    Stream(Box<RxStream>),
     Disconnected,
 }
 
 impl AsyncHydraSession {
-    fn ensure_stream(&mut self) -> Result<&mut AsyncF32RxStream, Error> {
+    fn ensure_stream(&mut self) -> Result<&mut RxStream, Error> {
         if matches!(self, Self::Device(_)) {
             let Self::Device(device) = std::mem::replace(self, Self::Disconnected) else {
                 unreachable!();
             };
-            *self = Self::Stream(Box::new((*device).into_async_f32_rx_stream()));
+            *self = Self::Stream(Box::new((*device).into_rx_stream()));
         }
         match self {
             Self::Stream(stream) => Ok(stream),
@@ -72,40 +72,46 @@ impl AsyncHydraSession {
         }
     }
 
-    async fn set_frequency_hz(&mut self, frequency_hz: u64) -> Result<(), Error> {
-        match self {
-            Self::Device(device) => device.set_frequency_hz(frequency_hz).await,
-            Self::Stream(stream) => stream.set_frequency_hz(frequency_hz).await,
-            Self::Disconnected => return Err(Error::DeviceDisconnected),
+    fn ensure_device(&mut self) -> Result<&mut HydraSdrDevice, Error> {
+        if matches!(self, Self::Stream(_)) {
+            let Self::Stream(stream) = std::mem::replace(self, Self::Disconnected) else {
+                unreachable!();
+            };
+            *self = Self::Device(Box::new((*stream).into_device()));
         }
-        .map_err(map_hydrasdr_error)
+        match self {
+            Self::Device(device) => Ok(device),
+            Self::Disconnected => Err(Error::DeviceDisconnected),
+            Self::Stream(_) => unreachable!(),
+        }
+    }
+
+    async fn set_frequency_hz(&mut self, frequency_hz: u64) -> Result<(), Error> {
+        self.ensure_device()?
+            .set_frequency_hz(frequency_hz)
+            .await
+            .map_err(map_hydrasdr_error)
     }
 
     async fn set_sample_rate_hz(&mut self, sample_rate_hz: u32) -> Result<(), Error> {
-        match self {
-            Self::Device(device) => device.set_sample_rate_hz(sample_rate_hz).await,
-            Self::Stream(stream) => stream.set_sample_rate_hz(sample_rate_hz).await,
-            Self::Disconnected => return Err(Error::DeviceDisconnected),
-        }
-        .map_err(map_hydrasdr_error)
+        self.ensure_device()?
+            .set_sample_rate_hz(sample_rate_hz)
+            .await
+            .map_err(map_hydrasdr_error)
     }
 
     async fn set_rf_port(&mut self, port: RfPort) -> Result<(), Error> {
-        match self {
-            Self::Device(device) => device.set_rf_port(port).await,
-            Self::Stream(stream) => stream.set_rf_port(port).await,
-            Self::Disconnected => return Err(Error::DeviceDisconnected),
-        }
-        .map_err(map_hydrasdr_error)
+        self.ensure_device()?
+            .set_rf_port(port)
+            .await
+            .map_err(map_hydrasdr_error)
     }
 
     async fn set_gain(&mut self, gain: GainConfig) -> Result<(), Error> {
-        match self {
-            Self::Device(device) => device.set_gain(gain).await,
-            Self::Stream(stream) => stream.set_gain(gain).await,
-            Self::Disconnected => return Err(Error::DeviceDisconnected),
-        }
-        .map_err(map_hydrasdr_error)
+        self.ensure_device()?
+            .set_gain(gain)
+            .await
+            .map_err(map_hydrasdr_error)
     }
 }
 
@@ -912,7 +918,12 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         let Some(AsyncHydraSession::Stream(stream)) = self.session.as_mut() else {
             return Err(Error::DeviceDisconnected);
         };
-        let read = match with_timeout(stream.read(out), timeout_from_micros(timeout_us)).await {
+        let read = match with_timeout(
+            stream.read(out, Duration::ZERO).into_future(),
+            timeout_from_micros(timeout_us),
+        )
+        .await
+        {
             TimeoutResult::Completed(read) => read.map_err(map_hydrasdr_error)?,
             TimeoutResult::TimedOut => 0,
         };
@@ -972,7 +983,6 @@ async fn open_selected_device_async(
 ) -> Result<(HydraSdrDevice, Option<u64>), Error> {
     match selector {
         DeviceSelector::First => HydraSdrDevice::builder()
-            .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
             .open()
             .await
@@ -983,7 +993,6 @@ async fn open_selected_device_async(
             .map_err(map_hydrasdr_error),
         DeviceSelector::Serial(serial) => HydraSdrDevice::builder()
             .serial(serial)
-            .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
             .open()
             .await
@@ -997,7 +1006,6 @@ async fn open_selected_device_async(
             if let Some(serial) = info.serial {
                 HydraSdrDevice::builder()
                     .serial(serial)
-                    .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
                     .open()
                     .await
@@ -1005,7 +1013,6 @@ async fn open_selected_device_async(
                     .map_err(map_hydrasdr_error)
             } else if index == 0 {
                 HydraSdrDevice::builder()
-                    .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
                     .open()
                     .await
