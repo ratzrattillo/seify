@@ -1,4 +1,6 @@
-use hydrasdr_rs::{Bandwidth, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, RfPort};
+use hydrasdr_rs::{
+    ActiveState, Bandwidth, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, GainStage, RfPort,
+};
 
 use crate::Direction::*;
 use crate::{Args, Capability, Direction, Error, Range, RangeItem};
@@ -7,15 +9,11 @@ pub(super) const F32_RX_MTU: usize = hydrasdr_rs::MAX_F32_IQ_SAMPLES_PER_TRANSFE
 const LNA_GAIN_MAX_DB: u8 = 14;
 const MIXER_GAIN_MAX_DB: u8 = 15;
 const VGA_GAIN_MAX_DB: u8 = 15;
-pub(super) struct ReceiverState {
-    pub(super) antenna: &'static str,
-    pub(super) frequency: Option<f64>,
-    pub(super) sample_rate: Option<f64>,
-    pub(super) bandwidth: Option<f64>,
+pub(super) struct ReceiverContext {
+    pub(super) active: ActiveState,
     pub(super) sample_rates: Vec<u32>,
     pub(super) bandwidths: Vec<u32>,
-    pub(super) gains: Vec<GainCache>,
-    pub(super) agc: bool,
+    pub(super) gains: Vec<GainElement>,
     pub(super) min_frequency: f64,
     pub(super) max_frequency: f64,
 }
@@ -40,73 +38,84 @@ fn discrete_range(values: &[u32], capability: Capability) -> Result<Range, Error
     ))
 }
 
-impl ReceiverState {
+impl ReceiverContext {
     pub(super) fn from_device_info(
         info: &DeviceInfo,
         sample_rates: Vec<u32>,
         bandwidths: Vec<u32>,
     ) -> Self {
-        let current_config = info.current_config.as_ref();
         Self {
-            antenna: "ANT",
-            frequency: current_config.map(|config| config.frequency_hz() as f64),
-            sample_rate: current_config
-                .map(|config| config.sample_rate_hz() as f64)
-                .or_else(|| sample_rates.first().map(|rate| *rate as f64)),
-            bandwidth: current_config
-                .and_then(|config| match config.bandwidth() {
-                    Bandwidth::Auto => None,
-                    Bandwidth::ManualHz(bandwidth) => Some(bandwidth as f64),
-                })
-                .or_else(|| bandwidths.first().map(|bandwidth| *bandwidth as f64)),
+            active: info.active_state.clone(),
             sample_rates,
             bandwidths,
-            gains: default_gain_cache(),
-            agc: false,
+            gains: gain_elements(),
             min_frequency: info.min_frequency as f64,
             max_frequency: info.max_frequency as f64,
         }
     }
 
-    pub(super) fn set_agc_cached(&mut self, agc: bool) {
-        self.agc = agc;
+    pub(super) fn antenna(&self) -> Result<&'static str, Error> {
+        Ok(match self.active.rf_port().map_err(map_hydrasdr_error)? {
+            RfPort::Rx0 => "ANT",
+            RfPort::Rx1 => "CABLE1",
+            RfPort::Rx2 => "CABLE2",
+        })
     }
 
-    pub(super) fn set_gain_cached(&mut self, gain_type: GainType, value: f64) {
-        if let Some(cached) = self
-            .gains
-            .iter_mut()
-            .find(|cached| cached.gain_type == gain_type)
-        {
-            cached.value = Some(value);
+    pub(super) fn frequency(&self) -> Result<f64, Error> {
+        self.active
+            .frequency_hz()
+            .map(|value| value as f64)
+            .map_err(map_hydrasdr_error)
+    }
+
+    pub(super) fn sample_rate(&self) -> Result<f64, Error> {
+        self.active
+            .sample_rate_hz()
+            .map(|value| value as f64)
+            .map_err(map_hydrasdr_error)
+    }
+
+    pub(super) fn bandwidth(&self) -> Result<f64, Error> {
+        match self.active.bandwidth().map_err(map_hydrasdr_error)? {
+            Bandwidth::ManualHz(value) => Ok(value as f64),
+            Bandwidth::Auto => Err(Error::unsupported(Capability::DriverOperation)),
         }
     }
 
-    pub(super) fn gain_value(&self, gain_type: GainType) -> Option<f64> {
-        self.gains
-            .iter()
-            .find(|cached| cached.gain_type == gain_type)
-            .and_then(|cached| cached.value)
+    pub(super) fn agc_enabled(&self) -> Result<bool, Error> {
+        self.active.agc_enabled().map_err(map_hydrasdr_error)
     }
 
-    pub(super) fn overall_gain(&self) -> Option<f64> {
-        self.gains
-            .iter()
-            .try_fold(0.0, |sum, cached| Some(sum + cached.value?))
+    pub(super) fn gain_value(&self, gain_type: GainType) -> Result<Option<f64>, Error> {
+        self.active
+            .gain(gain_type.stage())
+            .map(|value| value.map(f64::from))
+            .map_err(map_hydrasdr_error)
+    }
+
+    pub(super) fn overall_gain(&self) -> Result<Option<f64>, Error> {
+        [GainType::Lna, GainType::Mixer, GainType::Vga]
+            .into_iter()
+            .try_fold(Some(0.0), |sum, gain_type| {
+                Ok(match (sum, self.gain_value(gain_type)?) {
+                    (Some(sum), Some(value)) => Some(sum + value),
+                    _ => None,
+                })
+            })
     }
 
     pub(super) fn gain_range(&self, gain_type: GainType) -> Option<Range> {
         self.gains
             .iter()
-            .find(|cached| cached.gain_type == gain_type)
-            .map(|cached| cached.range.clone())
+            .find(|element| element.gain_type == gain_type)
+            .map(|element| element.range.clone())
     }
 }
 
-pub(super) struct GainCache {
+pub(super) struct GainElement {
     pub(super) name: &'static str,
     pub(super) gain_type: GainType,
-    pub(super) value: Option<f64>,
     pub(super) range: Range,
 }
 
@@ -118,6 +127,14 @@ pub(super) enum GainType {
 }
 
 impl GainType {
+    fn stage(self) -> GainStage {
+        match self {
+            Self::Lna => GainStage::Lna,
+            Self::Mixer => GainStage::Mixer,
+            Self::Vga => GainStage::Vga,
+        }
+    }
+
     pub(super) fn update(self, gain: f64) -> GainConfig {
         let gain = gain.round() as u8;
         match self {
@@ -209,7 +226,7 @@ pub(super) fn gain_type(name: &str) -> Option<GainType> {
     }
 }
 
-pub(super) fn default_gain_cache() -> Vec<GainCache> {
+pub(super) fn gain_elements() -> Vec<GainElement> {
     [
         ("LNA", GainType::Lna, 0, LNA_GAIN_MAX_DB),
         ("MIXER", GainType::Mixer, 0, MIXER_GAIN_MAX_DB),
@@ -217,7 +234,7 @@ pub(super) fn default_gain_cache() -> Vec<GainCache> {
     ]
     .into_iter()
     .map(|(name, gain_type, min_value, max_value)| {
-        gain_cache_item(name, gain_type, min_value, max_value, 1)
+        gain_element(name, gain_type, min_value, max_value, 1)
     })
     .collect()
 }
@@ -250,18 +267,17 @@ pub(super) fn device_selector(args: &Args) -> Result<DeviceSelector, Error> {
         Err(err) => Err(err),
     }
 }
-pub(super) fn gain_cache_item(
+pub(super) fn gain_element(
     name: &'static str,
     gain_type: GainType,
     min_value: u8,
     max_value: u8,
     step_value: u8,
-) -> GainCache {
+) -> GainElement {
     let step = step_value.max(1) as f64;
-    GainCache {
+    GainElement {
         name,
         gain_type,
-        value: None,
         range: Range::new(vec![RangeItem::Step(
             min_value as f64,
             max_value as f64,
@@ -313,36 +329,26 @@ mod tests {
 
     #[test]
     fn generic_gain_elements_are_physical_stages() {
-        let gains = default_gain_cache();
+        let gains = gain_elements();
         let names = gains.iter().map(|gain| gain.name).collect::<Vec<_>>();
 
         assert_eq!(names, ["LNA", "MIXER", "VGA"]);
-        assert!(gains.iter().all(|gain| gain.value.is_none()));
         assert_eq!(gain_type("linearity"), None);
         assert_eq!(gain_type("sensitivity"), None);
     }
 
     #[test]
-    fn overall_gain_uses_sum_of_known_physical_stages() {
-        let mut state = ReceiverState {
-            antenna: "ANT",
-            frequency: None,
-            sample_rate: None,
-            bandwidth: None,
+    fn overall_gain_requires_authoritative_physical_stage_values() {
+        let state = ReceiverContext {
+            active: ActiveState::default(),
             sample_rates: Vec::new(),
             bandwidths: Vec::new(),
-            gains: default_gain_cache(),
-            agc: false,
+            gains: gain_elements(),
             min_frequency: 0.0,
             max_frequency: 0.0,
         };
 
-        assert_eq!(state.overall_gain(), None);
-        state.set_gain_cached(GainType::Lna, 8.0);
-        state.set_gain_cached(GainType::Mixer, 9.0);
-        assert_eq!(state.overall_gain(), None);
-        state.set_gain_cached(GainType::Vga, 10.0);
-        assert_eq!(state.overall_gain(), Some(27.0));
+        assert_eq!(state.overall_gain().unwrap(), None);
     }
 
     #[test]

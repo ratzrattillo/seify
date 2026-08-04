@@ -23,7 +23,7 @@ use crate::{
 pub struct AsyncHydraSdr {
     session_slot: Shared<AsyncSessionSlot>,
     serial: Option<u64>,
-    inner: Shared<AsyncMutex<ReceiverState>>,
+    inner: Shared<AsyncMutex<ReceiverContext>>,
     streamer_claimed: Shared<AtomicBool>,
     cleanup_needed: Shared<AtomicBool>,
 }
@@ -272,14 +272,15 @@ impl AsyncHydraSdr {
         let (mut dev, serial) = open_selected_device_async(selector).await?;
         let sample_rates = dev.sample_rates().await.map_err(map_hydrasdr_error)?;
         let bandwidths = dev.bandwidths().await.unwrap_or_default();
-        let receiver_state = ReceiverState::from_device_info(dev.info(), sample_rates, bandwidths);
+        let receiver_context =
+            ReceiverContext::from_device_info(dev.info(), sample_rates, bandwidths);
 
         Ok(Self {
             session_slot: Shared::new(AsyncSessionSlot::new(AsyncHydraSession::Device(Box::new(
                 dev,
             )))),
             serial,
-            inner: Shared::new(AsyncMutex::new(receiver_state)),
+            inner: Shared::new(AsyncMutex::new(receiver_context)),
             streamer_claimed: Shared::new(AtomicBool::new(false)),
             cleanup_needed: Shared::new(AtomicBool::new(false)),
         })
@@ -331,7 +332,7 @@ impl AsyncHydraSdr {
 
     async fn antenna(&self, direction: Direction, channel: usize) -> Result<String, Error> {
         check_rx(direction, channel)?;
-        Ok(self.inner.lock().await.antenna.to_string())
+        Ok(self.inner.lock().await.antenna()?.to_string())
     }
 
     async fn set_antenna(
@@ -341,14 +342,12 @@ impl AsyncHydraSdr {
         name: &str,
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        let (name, port) = antenna_port(name).ok_or(Error::invalid_argument(
+        let (_, port) = antenna_port(name).ok_or(Error::invalid_argument(
             "hydrasdr",
             "invalid HydraSDR argument",
         ))?;
         let mut session = self.lease_idle_session().await?;
-        session.session_mut().set_rf_port(port).await?;
-        self.inner.lock().await.antenna = name;
-        Ok(())
+        session.session_mut().set_rf_port(port).await
     }
 
     async fn agc_available(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
@@ -364,15 +363,12 @@ impl AsyncHydraSdr {
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
         let mut session = self.lease_idle_session().await?;
-        session.session_mut().set_gain(agc_gain_config(agc)).await?;
-        let mut inner = self.inner.lock().await;
-        inner.set_agc_cached(agc);
-        Ok(())
+        session.session_mut().set_gain(agc_gain_config(agc)).await
     }
 
     async fn agc_enabled(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
         check_rx(direction, channel)?;
-        Ok(self.inner.lock().await.agc)
+        self.inner.lock().await.agc_enabled()
     }
 
     async fn gain_elements(
@@ -404,14 +400,13 @@ impl AsyncHydraSdr {
                 .session_mut()
                 .set_gain(gain_type.update(value))
                 .await?;
-            self.inner.lock().await.set_gain_cached(gain_type, value);
         }
         Ok(())
     }
 
     async fn gain(&self, direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
         check_rx(direction, channel)?;
-        Ok(self.inner.lock().await.overall_gain())
+        self.inner.lock().await.overall_gain()
     }
 
     async fn gain_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
@@ -438,10 +433,7 @@ impl AsyncHydraSdr {
 
         let gain_update = gain_type.update(gain);
         let mut session = self.lease_idle_session().await?;
-        session.session_mut().set_gain(gain_update).await?;
-        let mut inner = self.inner.lock().await;
-        inner.set_gain_cached(gain_type, gain);
-        Ok(())
+        session.session_mut().set_gain(gain_update).await
     }
 
     async fn gain_element(
@@ -455,9 +447,7 @@ impl AsyncHydraSdr {
             "hydrasdr",
             "invalid HydraSDR argument",
         ))?;
-        Ok(Some(self.inner.lock().await.gain_value(gain_type).ok_or(
-            Error::invalid_argument("hydrasdr", "invalid HydraSDR argument"),
-        )?))
+        self.inner.lock().await.gain_value(gain_type)
     }
 
     async fn gain_element_range(
@@ -544,11 +534,7 @@ impl AsyncHydraSdr {
                 "invalid HydraSDR argument",
             ));
         }
-        self.inner
-            .lock()
-            .await
-            .frequency
-            .ok_or(Error::unsupported(Capability::DriverOperation))
+        self.inner.lock().await.frequency()
     }
 
     async fn set_component_frequency(
@@ -568,18 +554,12 @@ impl AsyncHydraSdr {
         session
             .session_mut()
             .set_frequency_hz(frequency as u64)
-            .await?;
-        self.inner.lock().await.frequency = Some(frequency);
-        Ok(())
+            .await
     }
 
     async fn sample_rate(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
         check_rx(direction, channel)?;
-        self.inner
-            .lock()
-            .await
-            .sample_rate
-            .ok_or(Error::unsupported(Capability::DriverOperation))
+        self.inner.lock().await.sample_rate()
     }
 
     async fn set_sample_rate(
@@ -593,12 +573,7 @@ impl AsyncHydraSdr {
             return Err(Error::out_of_range("sample_rate", range, rate));
         }
         let mut session = self.lease_idle_session().await?;
-        session
-            .session_mut()
-            .set_sample_rate_hz(rate as u32)
-            .await?;
-        self.inner.lock().await.sample_rate = Some(rate);
-        Ok(())
+        session.session_mut().set_sample_rate_hz(rate as u32).await
     }
 
     async fn get_sample_rate_range(
@@ -613,11 +588,7 @@ impl AsyncHydraSdr {
 
     async fn bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
         check_rx(direction, channel)?;
-        self.inner
-            .lock()
-            .await
-            .bandwidth
-            .ok_or(Error::unsupported(Capability::DriverOperation))
+        self.inner.lock().await.bandwidth()
     }
 
     async fn set_bandwidth(
@@ -631,9 +602,7 @@ impl AsyncHydraSdr {
             return Err(Error::out_of_range("bandwidth", range, bw));
         }
         let mut session = self.lease_idle_session().await?;
-        session.session_mut().set_bandwidth_hz(bw as u32).await?;
-        self.inner.lock().await.bandwidth = Some(bw);
-        Ok(())
+        session.session_mut().set_bandwidth_hz(bw as u32).await
     }
 
     async fn get_bandwidth_range(
