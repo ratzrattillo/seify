@@ -24,6 +24,8 @@ async fn exercise_lifecycle() -> Result<(), Error> {
     let rx = device.rx(0).await?;
 
     // Exercise focused setters before a stream owns the device.
+    assert_eq!(rx.antenna().ports().await?, ["ANT"]);
+    assert_eq!(rx.antenna().selected().await?, "ANT");
     let frequency = rx.frequency().value().await?;
     let sample_rate = rx.sample_rate().value().await?;
     rx.frequency().set(frequency).await?;

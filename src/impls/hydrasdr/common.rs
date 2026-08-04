@@ -1,5 +1,6 @@
 use hydrasdr_rs::{
     ActiveState, Bandwidth, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, GainStage, RfPort,
+    RfPortInfo,
 };
 
 use crate::Direction::*;
@@ -14,6 +15,7 @@ pub(super) struct ReceiverContext {
     pub(super) sample_rates: Vec<u32>,
     pub(super) bandwidths: Vec<u32>,
     pub(super) gains: Vec<GainElement>,
+    pub(super) rf_ports: Vec<RfPortInfo>,
     pub(super) min_frequency: f64,
     pub(super) max_frequency: f64,
 }
@@ -49,17 +51,38 @@ impl ReceiverContext {
             sample_rates,
             bandwidths,
             gains: gain_elements(),
+            rf_ports: info.rf_ports.clone(),
             min_frequency: info.min_frequency as f64,
             max_frequency: info.max_frequency as f64,
         }
     }
 
-    pub(super) fn antenna(&self) -> Result<&'static str, Error> {
-        Ok(match self.active.rf_port().map_err(map_hydrasdr_error)? {
-            RfPort::Rx0 => "ANT",
-            RfPort::Rx1 => "CABLE1",
-            RfPort::Rx2 => "CABLE2",
-        })
+    pub(super) fn antennas(&self) -> Vec<String> {
+        self.rf_ports
+            .iter()
+            .map(|info| info.name.to_string())
+            .collect()
+    }
+
+    pub(super) fn antenna(&self) -> Result<String, Error> {
+        let active = self.active.rf_port().map_err(map_hydrasdr_error)?;
+        self.rf_ports
+            .iter()
+            .find(|info| info.port == active)
+            .map(|info| info.name.to_string())
+            .ok_or_else(|| {
+                Error::unsupported_reason(
+                    Capability::Antenna,
+                    "active HydraSDR RF port is not advertised by this device",
+                )
+            })
+    }
+
+    pub(super) fn rf_port_for_antenna(&self, name: &str) -> Option<RfPort> {
+        self.rf_ports
+            .iter()
+            .find(|info| info.name.eq_ignore_ascii_case(name))
+            .map(|info| info.port)
     }
 
     pub(super) fn frequency(&self) -> Result<f64, Error> {
@@ -208,15 +231,6 @@ pub(super) fn check_rx(direction: Direction, channel: usize) -> Result<(), Error
     }
 }
 
-pub(super) fn antenna_port(name: &str) -> Option<(&'static str, RfPort)> {
-    match name.to_ascii_uppercase().as_str() {
-        "ANT" => Some(("ANT", RfPort::Rx0)),
-        "CABLE1" => Some(("CABLE1", RfPort::Rx1)),
-        "CABLE2" => Some(("CABLE2", RfPort::Rx2)),
-        _ => None,
-    }
-}
-
 pub(super) fn gain_type(name: &str) -> Option<GainType> {
     match name.to_ascii_uppercase().as_str() {
         "LNA" => Some(GainType::Lna),
@@ -344,11 +358,36 @@ mod tests {
             sample_rates: Vec::new(),
             bandwidths: Vec::new(),
             gains: gain_elements(),
+            rf_ports: Vec::new(),
             min_frequency: 0.0,
             max_frequency: 0.0,
         };
 
         assert_eq!(state.overall_gain().unwrap(), None);
+    }
+
+    #[test]
+    fn antennas_come_from_device_metadata() {
+        let context = ReceiverContext {
+            active: ActiveState::default(),
+            sample_rates: Vec::new(),
+            bandwidths: Vec::new(),
+            gains: gain_elements(),
+            rf_ports: vec![RfPortInfo {
+                port: RfPort::Rx0,
+                name: "ANT",
+                min_frequency: 24_000_000,
+                max_frequency: 1_800_000_000,
+                has_bias_tee: true,
+                bias_tee: None,
+            }],
+            min_frequency: 24_000_000.0,
+            max_frequency: 1_800_000_000.0,
+        };
+
+        assert_eq!(context.antennas(), ["ANT"]);
+        assert_eq!(context.rf_port_for_antenna("ant"), Some(RfPort::Rx0));
+        assert_eq!(context.rf_port_for_antenna("CABLE1"), None);
     }
 
     #[test]

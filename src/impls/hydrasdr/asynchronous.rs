@@ -324,15 +324,12 @@ impl AsyncHydraSdr {
 
     async fn antennas(&self, direction: Direction, channel: usize) -> Result<Vec<String>, Error> {
         check_rx(direction, channel)?;
-        Ok(["ANT", "CABLE1", "CABLE2"]
-            .into_iter()
-            .map(str::to_string)
-            .collect())
+        Ok(self.inner.lock().await.antennas())
     }
 
     async fn antenna(&self, direction: Direction, channel: usize) -> Result<String, Error> {
         check_rx(direction, channel)?;
-        Ok(self.inner.lock().await.antenna()?.to_string())
+        self.inner.lock().await.antenna()
     }
 
     async fn set_antenna(
@@ -342,10 +339,15 @@ impl AsyncHydraSdr {
         name: &str,
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        let (_, port) = antenna_port(name).ok_or(Error::invalid_argument(
-            "hydrasdr",
-            "invalid HydraSDR argument",
-        ))?;
+        let port =
+            self.inner
+                .lock()
+                .await
+                .rf_port_for_antenna(name)
+                .ok_or(Error::invalid_argument(
+                    "antenna",
+                    "antenna is not available on this HydraSDR device",
+                ))?;
         let mut session = self.lease_idle_session().await?;
         session.session_mut().set_rf_port(port).await
     }
