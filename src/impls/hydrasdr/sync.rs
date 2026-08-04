@@ -832,7 +832,6 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
         DeviceSelector::First => HydraSdrDevice::builder()
             .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
-            .gain(agc_gain_config(false))
             .open()
             .wait()
             .map(|dev| {
@@ -844,7 +843,6 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
             .serial(serial)
             .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
-            .gain(agc_gain_config(false))
             .open()
             .wait()
             .map(|dev| (dev, Some(serial)))
@@ -859,7 +857,6 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
                     .serial(serial)
                     .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
-                    .gain(agc_gain_config(false))
                     .open()
                     .wait()
                     .map(|dev| (dev, Some(serial)))
@@ -868,7 +865,6 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
                 HydraSdrDevice::builder()
                     .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
-                    .gain(agc_gain_config(false))
                     .open()
                     .wait()
                     .map(|dev| {

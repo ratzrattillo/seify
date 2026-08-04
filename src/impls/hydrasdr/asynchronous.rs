@@ -1067,7 +1067,6 @@ async fn open_selected_device_async(
         DeviceSelector::First => HydraSdrDevice::builder()
             .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
-            .gain(agc_gain_config(false))
             .open()
             .await
             .map(|dev| {
@@ -1079,7 +1078,6 @@ async fn open_selected_device_async(
             .serial(serial)
             .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
-            .gain(agc_gain_config(false))
             .open()
             .await
             .map(|dev| (dev, Some(serial)))
@@ -1094,7 +1092,6 @@ async fn open_selected_device_async(
                     .serial(serial)
                     .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
-                    .gain(agc_gain_config(false))
                     .open()
                     .await
                     .map(|dev| (dev, Some(serial)))
@@ -1103,7 +1100,6 @@ async fn open_selected_device_async(
                 HydraSdrDevice::builder()
                     .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
-                    .gain(agc_gain_config(false))
                     .open()
                     .await
                     .map(|dev| {
