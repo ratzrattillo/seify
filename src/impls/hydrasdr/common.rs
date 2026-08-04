@@ -351,7 +351,7 @@ pub(super) fn map_hydrasdr_error(err: hydrasdr_rs::Error) -> Error {
     match err.kind() {
         ErrorKind::InvalidConfig => Error::invalid_argument("hydrasdr", err.to_string()),
         ErrorKind::NotFound => Error::DeviceNotFound,
-        ErrorKind::DeviceClosed => Error::DeviceDisconnected,
+        ErrorKind::DeviceClosed | ErrorKind::DeviceDisconnected => Error::DeviceDisconnected,
         ErrorKind::Busy => Error::Busy,
         ErrorKind::Unsupported => Error::unsupported(Capability::DriverOperation),
         ErrorKind::StreamClosed => Error::StreamClosed,
