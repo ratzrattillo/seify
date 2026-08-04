@@ -1,7 +1,7 @@
 use std::future::IntoFuture;
 use std::time::Duration;
 
-use hydrasdr_rs::{DecimationMode, Device as HydraSdrDevice, RxStream};
+use hydrasdr_rs::{DecimationPolicy, Device as HydraSdrDevice, RxStream};
 use num_complex::Complex32;
 
 use super::common::*;
@@ -861,7 +861,7 @@ async fn open_selected_device_async(
 ) -> Result<(HydraSdrDevice, Option<u64>), Error> {
     match selector {
         DeviceSelector::First => HydraSdrDevice::builder()
-            .decimation_mode(DecimationMode::HighDefinition)
+            .decimation_policy(DecimationPolicy::HighDefinition)
             .open()
             .await
             .map(|dev| {
@@ -871,7 +871,7 @@ async fn open_selected_device_async(
             .map_err(map_hydrasdr_error),
         DeviceSelector::Serial(serial) => HydraSdrDevice::builder()
             .serial(serial)
-            .decimation_mode(DecimationMode::HighDefinition)
+            .decimation_policy(DecimationPolicy::HighDefinition)
             .open()
             .await
             .map(|dev| (dev, Some(serial)))
@@ -884,14 +884,14 @@ async fn open_selected_device_async(
             if let Some(serial) = info.serial {
                 HydraSdrDevice::builder()
                     .serial(serial)
-                    .decimation_mode(DecimationMode::HighDefinition)
+                    .decimation_policy(DecimationPolicy::HighDefinition)
                     .open()
                     .await
                     .map(|dev| (dev, Some(serial)))
                     .map_err(map_hydrasdr_error)
             } else if index == 0 {
                 HydraSdrDevice::builder()
-                    .decimation_mode(DecimationMode::HighDefinition)
+                    .decimation_policy(DecimationPolicy::HighDefinition)
                     .open()
                     .await
                     .map(|dev| {

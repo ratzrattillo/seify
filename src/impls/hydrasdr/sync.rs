@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hydrasdr_rs::{
-    DecimationMode, Device as HydraSdrDevice, GainConfig, MaybeFuture, RfPort, RxStream,
+    DecimationPolicy, Device as HydraSdrDevice, GainConfig, MaybeFuture, RfPort, RxStream,
 };
 use num_complex::Complex32;
 
@@ -636,7 +636,7 @@ impl Drop for RxStreamer {
 fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Option<u64>), Error> {
     match selector {
         DeviceSelector::First => HydraSdrDevice::builder()
-            .decimation_mode(DecimationMode::HighDefinition)
+            .decimation_policy(DecimationPolicy::HighDefinition)
             .open()
             .wait()
             .map(|dev| {
@@ -646,7 +646,7 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
             .map_err(map_hydrasdr_error),
         DeviceSelector::Serial(serial) => HydraSdrDevice::builder()
             .serial(serial)
-            .decimation_mode(DecimationMode::HighDefinition)
+            .decimation_policy(DecimationPolicy::HighDefinition)
             .open()
             .wait()
             .map(|dev| (dev, Some(serial)))
@@ -659,14 +659,14 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
             if let Some(serial) = info.serial {
                 HydraSdrDevice::builder()
                     .serial(serial)
-                    .decimation_mode(DecimationMode::HighDefinition)
+                    .decimation_policy(DecimationPolicy::HighDefinition)
                     .open()
                     .wait()
                     .map(|dev| (dev, Some(serial)))
                     .map_err(map_hydrasdr_error)
             } else if index == 0 {
                 HydraSdrDevice::builder()
-                    .decimation_mode(DecimationMode::HighDefinition)
+                    .decimation_policy(DecimationPolicy::HighDefinition)
                     .open()
                     .wait()
                     .map(|dev| {
