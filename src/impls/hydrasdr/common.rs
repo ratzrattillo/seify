@@ -1,5 +1,5 @@
 use hydrasdr_rs::{
-    ActiveState, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, GainStage, RfPort, RfPortInfo,
+    Config, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, RfPort, RfPortInfo,
 };
 
 use crate::Direction::*;
@@ -10,7 +10,6 @@ const LNA_GAIN_MAX_DB: u8 = 14;
 const MIXER_GAIN_MAX_DB: u8 = 15;
 const VGA_GAIN_MAX_DB: u8 = 15;
 pub(super) struct ReceiverContext {
-    pub(super) active: ActiveState,
     pub(super) sample_rates: Vec<u32>,
     pub(super) gains: Vec<GainElement>,
     pub(super) rf_ports: Vec<RfPortInfo>,
@@ -37,7 +36,6 @@ fn discrete_range(values: &[u32], capability: Capability) -> Result<Range, Error
 impl ReceiverContext {
     pub(super) fn from_device_info(info: &DeviceInfo, sample_rates: Vec<u32>) -> Self {
         Self {
-            active: info.active_state.clone(),
             sample_rates,
             gains: gain_elements(),
             rf_ports: info.rf_ports.clone(),
@@ -53,8 +51,10 @@ impl ReceiverContext {
             .collect()
     }
 
-    pub(super) fn antenna(&self) -> Result<String, Error> {
-        let active = self.active.rf_port().map_err(map_hydrasdr_error)?;
+    pub(super) fn antenna(&self, config: &Config) -> Result<String, Error> {
+        let active = config
+            .rf_port()
+            .ok_or_else(|| Error::unsupported(Capability::Antenna))?;
         self.rf_ports
             .iter()
             .find(|info| info.port == active)
@@ -74,41 +74,52 @@ impl ReceiverContext {
             .map(|info| info.port)
     }
 
-    pub(super) fn frequency(&self) -> Result<f64, Error> {
-        self.active
-            .frequency_hz()
-            .map(|value| value as f64)
-            .map_err(map_hydrasdr_error)
+    pub(super) fn frequency(&self, config: &Config) -> Result<f64, Error> {
+        Ok(config.frequency_hz() as f64)
     }
 
-    pub(super) fn sample_rate(&self) -> Result<f64, Error> {
-        self.active
-            .sample_rate_hz()
-            .map(|value| value as f64)
-            .map_err(map_hydrasdr_error)
+    pub(super) fn sample_rate(&self, config: &Config) -> Result<f64, Error> {
+        Ok(config.sample_rate_hz() as f64)
     }
 
-    pub(super) fn agc_enabled(&self) -> Result<bool, Error> {
-        self.active.agc_enabled().map_err(map_hydrasdr_error)
+    pub(super) fn agc_enabled(&self, config: &Config) -> Result<bool, Error> {
+        Ok(match config.gain() {
+            GainConfig::Manual {
+                lna_agc, mixer_agc, ..
+            } => lna_agc.unwrap_or(false) || mixer_agc.unwrap_or(false),
+            GainConfig::Preset(_) | GainConfig::Unchanged => false,
+        })
     }
 
-    pub(super) fn gain_value(&self, gain_type: GainType) -> Result<Option<f64>, Error> {
-        self.active
-            .gain(gain_type.stage())
-            .map(|value| value.map(f64::from))
-            .map_err(map_hydrasdr_error)
+    pub(super) fn gain_value(
+        &self,
+        config: &Config,
+        gain_type: GainType,
+    ) -> Result<Option<f64>, Error> {
+        let GainConfig::Manual {
+            lna, mixer, vga, ..
+        } = config.gain()
+        else {
+            return Ok(None);
+        };
+        Ok(match gain_type {
+            GainType::Lna => lna,
+            GainType::Mixer => mixer,
+            GainType::Vga => vga,
+        }
+        .map(f64::from))
     }
 
-    pub(super) fn overall_gain(&self) -> Result<Option<f64>, Error> {
+    pub(super) fn overall_gain(&self, config: &Config) -> Result<Option<f64>, Error> {
         let gain = [GainType::Lna, GainType::Mixer, GainType::Vga]
             .into_iter()
             .try_fold(Some(0.0), |sum, gain_type| {
-                Ok::<_, Error>(match (sum, self.gain_value(gain_type)?) {
+                Ok::<_, Error>(match (sum, self.gain_value(config, gain_type)?) {
                     (Some(sum), Some(value)) => Some(sum + value),
                     _ => None,
                 })
             })?;
-        if gain.is_some() && self.agc_enabled()? {
+        if gain.is_some() && self.agc_enabled(config)? {
             return Ok(None);
         }
         Ok(gain)
@@ -136,14 +147,6 @@ pub(super) enum GainType {
 }
 
 impl GainType {
-    fn stage(self) -> GainStage {
-        match self {
-            Self::Lna => GainStage::Lna,
-            Self::Mixer => GainStage::Mixer,
-            Self::Vga => GainStage::Vga,
-        }
-    }
-
     pub(super) fn update(self, gain: f64) -> GainConfig {
         let gain = gain.round() as u8;
         match self {
@@ -339,7 +342,6 @@ mod tests {
     #[test]
     fn overall_gain_requires_authoritative_physical_stage_values() {
         let state = ReceiverContext {
-            active: ActiveState::default(),
             sample_rates: Vec::new(),
             gains: gain_elements(),
             rf_ports: Vec::new(),
@@ -347,13 +349,16 @@ mod tests {
             max_frequency: 0.0,
         };
 
-        assert_eq!(state.overall_gain().unwrap(), None);
+        let config = Config::builder()
+            .gain(GainConfig::Unchanged)
+            .build()
+            .expect("build config with unknown gains");
+        assert_eq!(state.overall_gain(&config).unwrap(), None);
     }
 
     #[test]
     fn antennas_come_from_device_metadata() {
         let context = ReceiverContext {
-            active: ActiveState::default(),
             sample_rates: Vec::new(),
             gains: gain_elements(),
             rf_ports: vec![RfPortInfo {

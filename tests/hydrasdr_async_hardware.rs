@@ -23,7 +23,7 @@ async fn exercise_lifecycle() -> Result<(), Error> {
     let device = registry.open(descriptor).await?;
     let rx = device.rx(0).await?;
 
-    // Exercise focused setters before a stream owns the device.
+    // Exercise focused setters before creating a stream.
     assert_eq!(rx.antenna().ports().await?, ["ANT"]);
     assert_eq!(rx.antenna().selected().await?, "ANT");
     let frequency = rx.frequency().value().await?;
@@ -47,6 +47,12 @@ async fn exercise_lifecycle() -> Result<(), Error> {
     stream.activate().await?;
     read_samples(&mut stream).await?;
 
+    // Device controls remain available while the typed bulk stream is active.
+    rx.frequency().set(frequency).await?;
+    rx.sample_rate().set(sample_rate).await?;
+    rx.gain().set(20.0).await?;
+    read_samples(&mut stream).await?;
+
     // A zero-duration read must remain cancellation-safe whether data has
     // already arrived or the timeout wins the race.
     let mut samples = [Complex32::default(); 64];
@@ -55,15 +61,13 @@ async fn exercise_lifecycle() -> Result<(), Error> {
 
     stream.deactivate().await?;
 
-    // A stopped owned stream keeps its USB queue while allowing focused
-    // configuration and subsequent reactivation.
-    rx.frequency().set(frequency).await?;
+    // A stopped stream keeps its USB queue for subsequent reactivation.
     stream.activate().await?;
     read_samples(&mut stream).await?;
     stream.deactivate().await?;
 
     // Dropping an active Seify streamer must be recoverable by the next
-    // streamer instead of losing the owned HydraSDR session.
+    // streamer after deferred receiver-off cleanup.
     stream.activate().await?;
     read_samples(&mut stream).await?;
     drop(stream);
