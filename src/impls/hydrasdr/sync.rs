@@ -160,7 +160,10 @@ impl HydraSdr {
         agc: bool,
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        self.with_device(|device| device.set_gain_sync(agc_gain_config(agc)))
+        self.with_device(|device| {
+            let gain = agc_gain_config(device.config(), agc)?;
+            device.set_gain_sync(gain)
+        })
     }
 
     fn agc_enabled(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
@@ -185,12 +188,7 @@ impl HydraSdr {
             return Err(Error::out_of_range("gain", range, gain));
         }
 
-        self.with_device(|device| {
-            for (gain_type, value) in distribute_overall_gain(gain) {
-                device.set_gain_sync(gain_type.update(value))?;
-            }
-            Ok(())
-        })
+        self.with_device(|device| device.set_gain_sync(overall_gain_config(gain)))
     }
 
     fn gain(&self, direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
@@ -220,8 +218,10 @@ impl HydraSdr {
             return Err(Error::out_of_range("gain", range, gain));
         }
 
-        let gain_update = gain_type.update(gain);
-        self.with_device(|device| device.set_gain_sync(gain_update))
+        self.with_device(|device| {
+            let gain = gain_type.update(device.config(), gain)?;
+            device.set_gain_sync(gain)
+        })
     }
 
     fn gain_element(

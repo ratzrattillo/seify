@@ -261,9 +261,10 @@ impl AsyncHydraSdr {
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
         let mut device = self.lease_device().await?;
+        let gain = agc_gain_config(device.value().config(), agc)?;
         device
             .value_mut()
-            .set_gain(agc_gain_config(agc))
+            .set_gain(gain)
             .await
             .map_err(map_hydrasdr_error)
     }
@@ -296,14 +297,11 @@ impl AsyncHydraSdr {
         }
 
         let mut device = self.lease_device().await?;
-        for (gain_type, value) in distribute_overall_gain(gain) {
-            device
-                .value_mut()
-                .set_gain(gain_type.update(value))
-                .await
-                .map_err(map_hydrasdr_error)?;
-        }
-        Ok(())
+        device
+            .value_mut()
+            .set_gain(overall_gain_config(gain))
+            .await
+            .map_err(map_hydrasdr_error)
     }
 
     async fn gain(&self, direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
@@ -334,11 +332,11 @@ impl AsyncHydraSdr {
             return Err(Error::out_of_range("gain", range, gain));
         }
 
-        let gain_update = gain_type.update(gain);
         let mut device = self.lease_device().await?;
+        let gain = gain_type.update(device.value().config(), gain)?;
         device
             .value_mut()
-            .set_gain(gain_update)
+            .set_gain(gain)
             .await
             .map_err(map_hydrasdr_error)
     }

@@ -1,5 +1,5 @@
 use hydrasdr_rs::{
-    Config, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, RfPort, RfPortInfo,
+    Config, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, RfPort, RfPortInfo, StageGain,
 };
 
 use crate::Direction::*;
@@ -94,9 +94,9 @@ impl ReceiverContext {
 
     pub(super) fn agc_enabled(&self, config: &Config) -> Result<bool, Error> {
         Ok(match config.gain() {
-            GainConfig::Manual {
-                lna_agc, mixer_agc, ..
-            } => lna_agc.unwrap_or(false) || mixer_agc.unwrap_or(false),
+            GainConfig::Stages { lna, mixer, .. } => {
+                matches!(lna, StageGain::Agc) || matches!(mixer, StageGain::Agc)
+            }
             GainConfig::Preset(_) => false,
         })
     }
@@ -106,16 +106,13 @@ impl ReceiverContext {
         config: &Config,
         gain_type: GainType,
     ) -> Result<Option<f64>, Error> {
-        let GainConfig::Manual {
-            lna, mixer, vga, ..
-        } = config.gain()
-        else {
+        let GainConfig::Stages { lna, mixer, vga } = config.gain() else {
             return Ok(None);
         };
         Ok(match gain_type {
-            GainType::Lna => lna,
-            GainType::Mixer => mixer,
-            GainType::Vga => vga,
+            GainType::Lna => manual_gain(lna),
+            GainType::Mixer => manual_gain(mixer),
+            GainType::Vga => Some(vga),
         }
         .map(f64::from))
     }
@@ -157,42 +154,68 @@ pub(super) enum GainType {
 }
 
 impl GainType {
-    pub(super) fn update(self, gain: f64) -> GainConfig {
+    pub(super) fn update(self, config: &Config, gain: f64) -> Result<GainConfig, Error> {
+        let GainConfig::Stages {
+            mut lna,
+            mut mixer,
+            mut vga,
+        } = config.gain()
+        else {
+            return Err(non_stage_gain_error());
+        };
         let gain = gain.round() as u8;
         match self {
-            Self::Lna => GainConfig::Manual {
-                lna: Some(gain),
-                mixer: None,
-                vga: None,
-                lna_agc: None,
-                mixer_agc: None,
-            },
-            Self::Mixer => GainConfig::Manual {
-                lna: None,
-                mixer: Some(gain),
-                vga: None,
-                lna_agc: None,
-                mixer_agc: None,
-            },
-            Self::Vga => GainConfig::Manual {
-                lna: None,
-                mixer: None,
-                vga: Some(gain),
-                lna_agc: None,
-                mixer_agc: None,
-            },
+            Self::Lna => lna = StageGain::Manual(gain),
+            Self::Mixer => mixer = StageGain::Manual(gain),
+            Self::Vga => vga = gain,
         }
+        Ok(GainConfig::Stages { lna, mixer, vga })
     }
 }
 
-pub(super) fn agc_gain_config(enabled: bool) -> GainConfig {
-    GainConfig::Manual {
-        lna: None,
-        mixer: None,
-        vga: None,
-        lna_agc: Some(enabled),
-        mixer_agc: Some(enabled),
+pub(super) fn agc_gain_config(config: &Config, enabled: bool) -> Result<GainConfig, Error> {
+    let GainConfig::Stages { lna, mixer, vga } = config.gain() else {
+        return Err(non_stage_gain_error());
+    };
+    let (lna, mixer) = if enabled {
+        (StageGain::Agc, StageGain::Agc)
+    } else {
+        (
+            fixed_or_default(lna, LNA_GAIN_MAX_DB),
+            fixed_or_default(mixer, MIXER_GAIN_MAX_DB),
+        )
+    };
+    Ok(GainConfig::Stages { lna, mixer, vga })
+}
+
+pub(super) fn overall_gain_config(gain: f64) -> GainConfig {
+    let [(_, lna), (_, mixer), (_, vga)] = distribute_overall_gain(gain);
+    GainConfig::Stages {
+        lna: StageGain::Manual(lna.round() as u8),
+        mixer: StageGain::Manual(mixer.round() as u8),
+        vga: vga.round() as u8,
     }
+}
+
+fn manual_gain(gain: StageGain) -> Option<u8> {
+    match gain {
+        StageGain::Manual(value) => Some(value),
+        StageGain::Agc => None,
+    }
+}
+
+fn fixed_or_default(gain: StageGain, default: u8) -> StageGain {
+    match gain {
+        StageGain::Manual(value) => StageGain::Manual(value),
+        StageGain::Agc => StageGain::Manual(default),
+    }
+}
+
+fn non_stage_gain_error() -> Error {
+    Error::unsupported_reason(
+        Capability::Gain,
+        "HydraSDR preset gain does not expose physical stage values",
+    )
 }
 
 pub(super) fn overall_gain_range() -> Range {
@@ -350,7 +373,7 @@ mod tests {
     }
 
     #[test]
-    fn overall_gain_requires_authoritative_physical_stage_values() {
+    fn overall_gain_is_unknown_while_a_stage_uses_agc() {
         let state = ReceiverContext {
             sample_rates: Vec::new(),
             gains: gain_elements(),
@@ -358,16 +381,47 @@ mod tests {
         };
 
         let config = Config::builder()
-            .gain(GainConfig::Manual {
-                lna: None,
-                mixer: None,
-                vga: None,
-                lna_agc: None,
-                mixer_agc: None,
+            .gain(GainConfig::Stages {
+                lna: StageGain::Agc,
+                mixer: StageGain::Manual(15),
+                vga: 6,
             })
             .build()
-            .expect("build config with unknown gains");
+            .expect("build config with LNA AGC");
         assert_eq!(state.overall_gain(&config).unwrap(), None);
+    }
+
+    #[test]
+    fn element_updates_preserve_the_complete_stage_configuration() {
+        let config = Config::builder()
+            .gain(GainConfig::Stages {
+                lna: StageGain::Agc,
+                mixer: StageGain::Manual(5),
+                vga: 6,
+            })
+            .build()
+            .expect("build stage config");
+
+        assert_eq!(
+            GainType::Vga.update(&config, 8.0).unwrap(),
+            GainConfig::Stages {
+                lna: StageGain::Agc,
+                mixer: StageGain::Manual(5),
+                vga: 8,
+            }
+        );
+    }
+
+    #[test]
+    fn overall_gain_is_one_complete_manual_configuration() {
+        assert_eq!(
+            overall_gain_config(20.0),
+            GainConfig::Stages {
+                lna: StageGain::Manual(14),
+                mixer: StageGain::Manual(6),
+                vga: 0,
+            }
+        );
     }
 
     #[test]
