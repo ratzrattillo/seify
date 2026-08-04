@@ -67,3 +67,11 @@ vmcircbuffer = { version = "0.0.16", features = ["sync"] }
 
 [package.metadata.docs.rs]
 no-default-features = true
+features = [
+    "aaronia_http",
+    "bladerf1",
+    "dummy",
+    "hackrfone",
+    "hydrasdr",
+    "smol",
+]
