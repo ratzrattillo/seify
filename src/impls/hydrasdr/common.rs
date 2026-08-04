@@ -87,7 +87,7 @@ impl ReceiverContext {
             GainConfig::Manual {
                 lna_agc, mixer_agc, ..
             } => lna_agc.unwrap_or(false) || mixer_agc.unwrap_or(false),
-            GainConfig::Preset(_) | GainConfig::Unchanged => false,
+            GainConfig::Preset(_) => false,
         })
     }
 
@@ -350,7 +350,13 @@ mod tests {
         };
 
         let config = Config::builder()
-            .gain(GainConfig::Unchanged)
+            .gain(GainConfig::Manual {
+                lna: None,
+                mixer: None,
+                vga: None,
+                lna_agc: None,
+                mixer_agc: None,
+            })
             .build()
             .expect("build config with unknown gains");
         assert_eq!(state.overall_gain(&config).unwrap(), None);
