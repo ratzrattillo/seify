@@ -19,7 +19,7 @@ use crate::{
 pub struct AsyncHydraSdr {
     device_slot: Shared<AsyncSlot<Box<HydraSdrDevice>>>,
     abandoned_stream_slot: Shared<AsyncSlot<RxStream>>,
-    serial: Option<u64>,
+    serial: u64,
     inner: Shared<ReceiverContext>,
 }
 
@@ -154,6 +154,9 @@ async fn cleanup_abandoned_stream(slot: &Shared<AsyncSlot<RxStream>>) -> Result<
 
 impl AsyncHydraSdr {
     /// Return descriptors for detected HydraSDR RFOne devices asynchronously.
+    ///
+    /// Every descriptor contains a normalized serial. Zero represents a
+    /// missing, invalid, or zero USB serial and may match any such device.
     pub async fn probe(args: &Args) -> Result<Vec<Args>, Error> {
         let devices = HydraSdrDevice::list().await.map_err(map_hydrasdr_error)?;
         probe_args(args, devices)
@@ -190,9 +193,7 @@ impl AsyncHydraSdr {
     }
 
     async fn id(&self) -> Result<String, Error> {
-        self.serial
-            .map(|serial| serial.to_string())
-            .ok_or_else(|| Error::unsupported(Capability::DeviceId))
+        Ok(self.serial.to_string())
     }
 
     async fn info(&self) -> Result<Args, Error> {
@@ -827,8 +828,10 @@ impl AsyncTypedDeviceBackend for AsyncHydraSdr {
     #[cfg(target_arch = "wasm32")]
     fn webusb_filters(args: &Args) -> Result<Vec<WebUsbDeviceFilter>, Error> {
         let serial = match device_selector(args)? {
-            DeviceSelector::Serial(serial) => Some(format!("HYDRASDR SN:{serial:016X}")),
-            DeviceSelector::First | DeviceSelector::Index(_) => None,
+            DeviceSelector::Serial(serial) if serial != 0 => {
+                Some(format!("HYDRASDR SN:{serial:016X}"))
+            }
+            DeviceSelector::First | DeviceSelector::Serial(_) | DeviceSelector::Index(_) => None,
         };
         Ok([(0x1d50, 0x60a1), (0x38af, 0x0001)]
             .into_iter()
@@ -854,14 +857,14 @@ impl AsyncTypedDeviceBackend for AsyncHydraSdr {
 
 async fn open_selected_device_async(
     selector: DeviceSelector,
-) -> Result<(HydraSdrDevice, Option<u64>), Error> {
+) -> Result<(HydraSdrDevice, u64), Error> {
     match selector {
         DeviceSelector::First => HydraSdrDevice::builder()
             .decimation_policy(DecimationPolicy::HighDefinition)
             .open()
             .await
             .map(|dev| {
-                let serial = dev.info().serial;
+                let serial = dev.info().serial.normalized();
                 (dev, serial)
             })
             .map_err(map_hydrasdr_error),
@@ -870,34 +873,21 @@ async fn open_selected_device_async(
             .decimation_policy(DecimationPolicy::HighDefinition)
             .open()
             .await
-            .map(|dev| (dev, Some(serial)))
+            .map(|dev| (dev, serial))
             .map_err(map_hydrasdr_error),
         DeviceSelector::Index(index) => {
             let devices = HydraSdrDevice::list().await.map_err(map_hydrasdr_error)?;
             let Some(info) = devices.get(index) else {
                 return Err(Error::DeviceNotFound);
             };
-            if let Some(serial) = info.serial {
-                HydraSdrDevice::builder()
-                    .serial(serial)
-                    .decimation_policy(DecimationPolicy::HighDefinition)
-                    .open()
-                    .await
-                    .map(|dev| (dev, Some(serial)))
-                    .map_err(map_hydrasdr_error)
-            } else if index == 0 {
-                HydraSdrDevice::builder()
-                    .decimation_policy(DecimationPolicy::HighDefinition)
-                    .open()
-                    .await
-                    .map(|dev| {
-                        let serial = dev.info().serial;
-                        (dev, serial)
-                    })
-                    .map_err(map_hydrasdr_error)
-            } else {
-                Err(Error::DeviceNotFound)
-            }
+            let serial = info.serial.normalized();
+            HydraSdrDevice::builder()
+                .serial(serial)
+                .decimation_policy(DecimationPolicy::HighDefinition)
+                .open()
+                .await
+                .map(|dev| (dev, serial))
+                .map_err(map_hydrasdr_error)
         }
     }
 }

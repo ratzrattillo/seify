@@ -17,7 +17,7 @@ use crate::{
 #[derive(Clone)]
 pub struct HydraSdr {
     device: Arc<Mutex<HydraSdrDevice>>,
-    serial: Option<u64>,
+    serial: u64,
     inner: Arc<ReceiverContext>,
 }
 /// Exclusively claimed HydraSDR RFOne receive streamer.
@@ -65,6 +65,9 @@ impl HydraSdrDeviceControl for HydraSdrDevice {
 
 impl HydraSdr {
     /// Return descriptors for detected HydraSDR RFOne devices.
+    ///
+    /// Every descriptor contains a normalized serial. Zero represents a
+    /// missing, invalid, or zero USB serial and may match any such device.
     pub fn probe(args: &Args) -> Result<Vec<Args>, Error> {
         let devices = HydraSdrDevice::list().wait().map_err(map_hydrasdr_error)?;
         probe_args(args, devices)
@@ -101,11 +104,7 @@ impl HydraSdr {
     }
 
     fn id(&self) -> Result<String, Error> {
-        if let Some(serial) = self.serial {
-            return Ok(serial.to_string());
-        }
-
-        Err(Error::unsupported(Capability::DeviceId))
+        Ok(self.serial.to_string())
     }
 
     fn info(&self) -> Result<Args, Error> {
@@ -633,14 +632,14 @@ impl Drop for RxStreamer {
     }
 }
 
-fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Option<u64>), Error> {
+fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, u64), Error> {
     match selector {
         DeviceSelector::First => HydraSdrDevice::builder()
             .decimation_policy(DecimationPolicy::HighDefinition)
             .open()
             .wait()
             .map(|dev| {
-                let serial = dev.info().serial;
+                let serial = dev.info().serial.normalized();
                 (dev, serial)
             })
             .map_err(map_hydrasdr_error),
@@ -649,34 +648,21 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
             .decimation_policy(DecimationPolicy::HighDefinition)
             .open()
             .wait()
-            .map(|dev| (dev, Some(serial)))
+            .map(|dev| (dev, serial))
             .map_err(map_hydrasdr_error),
         DeviceSelector::Index(index) => {
             let devices = HydraSdrDevice::list().wait().map_err(map_hydrasdr_error)?;
             let Some(info) = devices.get(index) else {
                 return Err(Error::DeviceNotFound);
             };
-            if let Some(serial) = info.serial {
-                HydraSdrDevice::builder()
-                    .serial(serial)
-                    .decimation_policy(DecimationPolicy::HighDefinition)
-                    .open()
-                    .wait()
-                    .map(|dev| (dev, Some(serial)))
-                    .map_err(map_hydrasdr_error)
-            } else if index == 0 {
-                HydraSdrDevice::builder()
-                    .decimation_policy(DecimationPolicy::HighDefinition)
-                    .open()
-                    .wait()
-                    .map(|dev| {
-                        let serial = dev.info().serial;
-                        (dev, serial)
-                    })
-                    .map_err(map_hydrasdr_error)
-            } else {
-                Err(Error::DeviceNotFound)
-            }
+            let serial = info.serial.normalized();
+            HydraSdrDevice::builder()
+                .serial(serial)
+                .decimation_policy(DecimationPolicy::HighDefinition)
+                .open()
+                .wait()
+                .map(|dev| (dev, serial))
+                .map_err(map_hydrasdr_error)
         }
     }
 }

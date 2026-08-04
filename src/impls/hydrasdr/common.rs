@@ -9,6 +9,23 @@ pub(super) const F32_RX_MTU: usize = hydrasdr_rs::MAX_F32_IQ_SAMPLES_PER_TRANSFE
 const LNA_GAIN_MAX_DB: u8 = 14;
 const MIXER_GAIN_MAX_DB: u8 = 15;
 const VGA_GAIN_MAX_DB: u8 = 15;
+
+pub(super) trait NormalizedHydraSdrSerial {
+    fn normalized(self) -> u64;
+}
+
+impl NormalizedHydraSdrSerial for u64 {
+    fn normalized(self) -> u64 {
+        self
+    }
+}
+
+impl NormalizedHydraSdrSerial for Option<u64> {
+    fn normalized(self) -> u64 {
+        self.unwrap_or(0)
+    }
+}
+
 pub(super) struct ReceiverContext {
     pub(super) sample_rates: Vec<u32>,
     pub(super) gains: Vec<GainElement>,
@@ -279,9 +296,7 @@ pub(super) fn probe_args_from_info(dev: DeviceDescriptor) -> Args {
     args.set("vid", format!("0x{:04x}", dev.vid));
     args.set("pid", format!("0x{:04x}", dev.pid));
     args.set("description", dev.description);
-    if let Some(serial) = dev.serial {
-        args.set("serial", serial.to_string());
-    }
+    args.set("serial", dev.serial.normalized().to_string());
     if let Some(product) = dev.product_string {
         args.set("product", product);
     }
@@ -293,7 +308,7 @@ pub(super) fn probe_args(args: &Args, devices: Vec<DeviceDescriptor>) -> Result<
         DeviceSelector::First => devices,
         DeviceSelector::Serial(serial) => devices
             .into_iter()
-            .filter(|device| device.serial == Some(serial))
+            .filter(|device| device.serial.normalized() == serial)
             .collect(),
         DeviceSelector::Index(index) => devices.into_iter().nth(index).into_iter().collect(),
     };
@@ -347,6 +362,10 @@ pub(super) fn map_hydrasdr_error(err: hydrasdr_rs::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn descriptor_serial<T: From<u64>>(serial: u64) -> T {
+        T::from(serial)
+    }
 
     #[test]
     fn empty_sample_rate_list_is_unsupported() {
@@ -519,7 +538,7 @@ mod tests {
             vid: 0x38af,
             pid: 0x0001,
             description: "HydraSDR RFOne Official VID/PID",
-            serial: Some(0x1234_5678_9abc_def0),
+            serial: descriptor_serial(0x1234_5678_9abc_def0),
             product_string: Some("HydraSDR RFOne".to_string()),
         };
 
@@ -539,12 +558,12 @@ mod tests {
     #[test]
     fn probe_args_honors_serial_and_index_selectors() {
         let devices = || {
-            [1, 2, 3]
+            [0_u64, 2, 3]
                 .into_iter()
                 .map(|serial| DeviceDescriptor {
                     vid: 0x1d50,
                     pid: 0x60a1,
-                    serial: Some(serial),
+                    serial: descriptor_serial(serial),
                     description: "HydraSDR RFOne",
                     product_string: Some("HydraSDR RFOne".to_owned()),
                 })
@@ -555,6 +574,11 @@ mod tests {
         let by_serial = probe_args(&serial, devices()).unwrap();
         assert_eq!(by_serial.len(), 1);
         assert_eq!(by_serial[0].get::<u64>("serial").unwrap(), 2);
+
+        let zero: Args = "serial=0".try_into().unwrap();
+        let by_zero = probe_args(&zero, devices()).unwrap();
+        assert_eq!(by_zero.len(), 1);
+        assert_eq!(by_zero[0].get::<u64>("serial").unwrap(), 0);
 
         let index: Args = "index=2".try_into().unwrap();
         let by_index = probe_args(&index, devices()).unwrap();
@@ -590,6 +614,13 @@ mod tests {
         let args = Args::default();
 
         assert_eq!(device_selector(&args).unwrap(), DeviceSelector::First);
+    }
+
+    #[test]
+    fn missing_hydrasdr_serial_normalizes_to_zero() {
+        assert_eq!(NormalizedHydraSdrSerial::normalized(None), 0);
+        assert_eq!(NormalizedHydraSdrSerial::normalized(Some(42)), 42);
+        assert_eq!(NormalizedHydraSdrSerial::normalized(42), 42);
     }
 
     #[test]
