@@ -130,7 +130,7 @@ impl FromStr for Args {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let v = separated_list0(
+        let (remaining, pairs) = separated_list0(
             delimited(multispace0, tag(","), multispace0),
             separated_pair(
                 parse_string::<nom::error::Error<_>>,
@@ -140,8 +140,13 @@ impl FromStr for Args {
         )
         .parse(s)
         .map_err(|_| Error::invalid_argument("args", "failed to parse args"))?;
+
+        if !remaining.trim().is_empty() {
+            return Err(Error::invalid_argument("args", "failed to parse args"));
+        }
+
         Ok(Args {
-            map: HashMap::from_iter(v.1.iter().cloned().map(|(a, b)| (a.into(), b.into()))),
+            map: HashMap::from_iter(pairs.into_iter().map(|(a, b)| (a.into(), b.into()))),
         })
     }
 }
@@ -229,6 +234,19 @@ mod tests {
         assert_eq!(c.get::<String>("foo").unwrap(), "bar");
         assert_eq!(c.get::<String>("fo").unwrap(), "ba");
         assert_eq!(c.map.len(), 2);
+    }
+    #[test]
+    fn reject_unconsumed_input() {
+        for input in [
+            "garbage",
+            "driver=dummy trailing-junk",
+            "driver=dummy,broken",
+        ] {
+            assert!(matches!(
+                input.parse::<Args>(),
+                Err(Error::InvalidArgument { name, .. }) if name == "args"
+            ));
+        }
     }
     #[test]
     fn deserialize_nonascii() {
