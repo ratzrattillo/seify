@@ -31,7 +31,6 @@ pub struct RxStreamer {
     session_slot: Arc<Mutex<Option<SyncHydraSession>>>,
     streamer_claimed: Arc<AtomicBool>,
     session: Option<SyncHydraSession>,
-    iq_scratch: Vec<(f32, f32)>,
     active: bool,
     stop_required: bool,
 }
@@ -706,7 +705,6 @@ impl RxStreamer {
             session_slot,
             streamer_claimed,
             session: Some(session),
-            iq_scratch: Vec::new(),
             active: false,
             stop_required: false,
         }
@@ -796,22 +794,12 @@ impl crate::RxStreamer for RxStreamer {
         } else {
             Duration::from_micros(timeout_us as u64)
         };
-        self.iq_scratch.resize(read_len, (0.0, 0.0));
-        let read = self
-            .session
+        self.session
             .as_mut()
             .ok_or(Error::DeviceDisconnected)?
             .ensure_stream()?
-            .read(&mut self.iq_scratch, timeout)
-            .map_err(map_hydrasdr_error)?;
-        for (dst, (i, q)) in out
-            .iter_mut()
-            .take(read)
-            .zip(self.iq_scratch.iter().copied())
-        {
-            *dst = Complex32::new(i, q);
-        }
-        Ok(read)
+            .read(&mut out[..read_len], timeout)
+            .map_err(map_hydrasdr_error)
     }
 }
 

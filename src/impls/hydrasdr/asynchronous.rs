@@ -40,7 +40,6 @@ pub struct AsyncHydraSdrRxStreamer {
     streamer_claimed: Shared<AtomicBool>,
     cleanup_needed: Shared<AtomicBool>,
     session: Option<AsyncHydraSession>,
-    iq_scratch: Vec<(f32, f32)>,
     active: bool,
     stop_required: bool,
 }
@@ -890,7 +889,6 @@ impl AsyncHydraSdrRxStreamer {
             streamer_claimed,
             cleanup_needed,
             session: Some(session),
-            iq_scratch: Vec::new(),
             active: false,
             stop_required: false,
         }
@@ -989,13 +987,8 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         let Some(AsyncHydraSession::Stream(stream)) = self.session.as_mut() else {
             return Err(Error::DeviceDisconnected);
         };
-        let read = match with_timeout(
-            read_async_f32_stream(stream, out, &mut self.iq_scratch),
-            timeout_from_micros(timeout_us),
-        )
-        .await
-        {
-            TimeoutResult::Completed(read) => read?,
+        let read = match with_timeout(stream.read(out), timeout_from_micros(timeout_us)).await {
+            TimeoutResult::Completed(read) => read.map_err(map_hydrasdr_error)?,
             TimeoutResult::TimedOut => 0,
         };
         Ok(read)
@@ -1014,19 +1007,6 @@ impl Drop for AsyncHydraSdrRxStreamer {
         self.active = false;
         self.streamer_claimed.store(false, Ordering::SeqCst);
     }
-}
-
-async fn read_async_f32_stream(
-    stream: &mut AsyncF32RxStream,
-    out: &mut [Complex32],
-    iq_scratch: &mut Vec<(f32, f32)>,
-) -> Result<usize, Error> {
-    iq_scratch.resize(out.len(), (0.0, 0.0));
-    let read = stream.read(iq_scratch).await.map_err(map_hydrasdr_error)?;
-    for (dst, (i, q)) in out.iter_mut().take(read).zip(iq_scratch.iter().copied()) {
-        *dst = Complex32::new(i, q);
-    }
-    Ok(read)
 }
 
 impl AsyncTypedDeviceBackend for AsyncHydraSdr {
