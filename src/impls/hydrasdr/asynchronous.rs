@@ -255,8 +255,8 @@ impl AsyncHydraSdr {
             .try_into()
             .map_err(|_| Error::invalid_argument("args", "failed to convert args"))?;
         let selector = device_selector(&args)?;
-        let (mut dev, serial) = open_selected_device_async(selector).await?;
-        let sample_rates = dev.sample_rates().await.map_err(map_hydrasdr_error)?;
+        let (dev, serial) = open_selected_device_async(selector).await?;
+        let sample_rates = dev.sample_rates();
         let receiver_context = ReceiverContext::from_device_info(dev.info(), sample_rates);
 
         Ok(Self {
