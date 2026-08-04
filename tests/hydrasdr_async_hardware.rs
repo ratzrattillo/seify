@@ -31,8 +31,8 @@ async fn exercise_lifecycle() -> Result<(), Error> {
 
     assert!(!rx.agc().enabled().await?);
     assert_eq!(rx.gain().elements().await?, ["LNA", "MIXER", "VGA"]);
-    assert_eq!(rx.gain().value().await?, Some(0.0));
-    assert_eq!(rx.gain().element("LNA").value().await?, Some(0.0));
+    assert_eq!(rx.gain().value().await?, Some(10.0));
+    assert_eq!(rx.gain().element("LNA").value().await?, Some(10.0));
     assert_eq!(rx.gain().element("MIXER").value().await?, Some(0.0));
     assert_eq!(rx.gain().element("VGA").value().await?, Some(0.0));
     rx.gain().set(20.0).await?;
