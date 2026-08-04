@@ -21,6 +21,3 @@ The application code contains no HydraSDR-specific selection or controls. Its
 manifest enables `hydrasdr` because that is currently Seify's only WebUSB
 driver. As more asynchronous WASM drivers are added, their features can be
 enabled there without changing the page logic.
-
-This development example uses the adjacent checkouts of `seify`,
-`hydrasdr-rs`, and the `nusb` path selected by `hydrasdr-rs`.
