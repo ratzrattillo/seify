@@ -131,12 +131,9 @@ impl Drop for SyncStreamerClaim {
 
 impl HydraSdr {
     /// Return descriptors for detected HydraSDR RFOne devices.
-    pub fn probe(_args: &Args) -> Result<Vec<Args>, Error> {
-        let mut devs = Vec::new();
-        for dev in HydraSdrDevice::list().wait().map_err(map_hydrasdr_error)? {
-            devs.push(probe_args_from_info(dev));
-        }
-        Ok(devs)
+    pub fn probe(args: &Args) -> Result<Vec<Args>, Error> {
+        let devices = HydraSdrDevice::list().wait().map_err(map_hydrasdr_error)?;
+        probe_args(args, devices)
     }
 
     /// Open a HydraSDR RFOne device from arguments.

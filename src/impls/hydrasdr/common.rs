@@ -254,6 +254,18 @@ pub(super) fn probe_args_from_info(dev: DeviceDescriptor) -> Args {
     args
 }
 
+pub(super) fn probe_args(args: &Args, devices: Vec<DeviceDescriptor>) -> Result<Vec<Args>, Error> {
+    let selected = match device_selector(args)? {
+        DeviceSelector::First => devices,
+        DeviceSelector::Serial(serial) => devices
+            .into_iter()
+            .filter(|device| device.serial == Some(serial))
+            .collect(),
+        DeviceSelector::Index(index) => devices.into_iter().nth(index).into_iter().collect(),
+    };
+    Ok(selected.into_iter().map(probe_args_from_info).collect())
+}
+
 pub(super) fn device_selector(args: &Args) -> Result<DeviceSelector, Error> {
     match args.get::<usize>("index") {
         Ok(index) => return Ok(DeviceSelector::Index(index)),
@@ -416,6 +428,35 @@ mod tests {
         );
         assert_eq!(args.get::<String>("serial").unwrap(), "1311768467463790320");
         assert_eq!(args.get::<String>("product").unwrap(), "HydraSDR RFOne");
+    }
+
+    #[test]
+    fn probe_args_honors_serial_and_index_selectors() {
+        let devices = || {
+            [1, 2, 3]
+                .into_iter()
+                .map(|serial| DeviceDescriptor {
+                    vid: 0x1d50,
+                    pid: 0x60a1,
+                    serial: Some(serial),
+                    description: "HydraSDR RFOne",
+                    product_string: Some("HydraSDR RFOne".to_owned()),
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let serial: Args = "serial=2".try_into().unwrap();
+        let by_serial = probe_args(&serial, devices()).unwrap();
+        assert_eq!(by_serial.len(), 1);
+        assert_eq!(by_serial[0].get::<u64>("serial").unwrap(), 2);
+
+        let index: Args = "index=2".try_into().unwrap();
+        let by_index = probe_args(&index, devices()).unwrap();
+        assert_eq!(by_index.len(), 1);
+        assert_eq!(by_index[0].get::<u64>("serial").unwrap(), 3);
+
+        let missing: Args = "serial=4".try_into().unwrap();
+        assert!(probe_args(&missing, devices()).unwrap().is_empty());
     }
 
     #[test]

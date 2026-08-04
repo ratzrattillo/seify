@@ -245,12 +245,9 @@ async fn cleanup_abandoned_session(
 
 impl AsyncHydraSdr {
     /// Return descriptors for detected HydraSDR RFOne devices asynchronously.
-    pub async fn probe(_args: &Args) -> Result<Vec<Args>, Error> {
-        let mut devs = Vec::new();
-        for dev in HydraSdrDevice::list().await.map_err(map_hydrasdr_error)? {
-            devs.push(probe_args_from_info(dev));
-        }
-        Ok(devs)
+    pub async fn probe(args: &Args) -> Result<Vec<Args>, Error> {
+        let devices = HydraSdrDevice::list().await.map_err(map_hydrasdr_error)?;
+        probe_args(args, devices)
     }
 
     /// Open a HydraSDR RFOne device from arguments asynchronously.
