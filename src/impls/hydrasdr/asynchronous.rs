@@ -1,6 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use futures::lock::Mutex as AsyncMutex;
 use hydrasdr_rs::{
     AsyncF32RxStream, DecimationMode, Device as HydraSdrDevice, GainConfig, RfPort, SampleFormat,
 };
@@ -23,7 +22,7 @@ use crate::{
 pub struct AsyncHydraSdr {
     session_slot: Shared<AsyncSessionSlot>,
     serial: Option<u64>,
-    inner: Shared<AsyncMutex<ReceiverContext>>,
+    inner: Shared<ReceiverContext>,
     streamer_claimed: Shared<AtomicBool>,
     cleanup_needed: Shared<AtomicBool>,
 }
@@ -265,7 +264,7 @@ impl AsyncHydraSdr {
                 dev,
             )))),
             serial,
-            inner: Shared::new(AsyncMutex::new(receiver_context)),
+            inner: Shared::new(receiver_context),
             streamer_claimed: Shared::new(AtomicBool::new(false)),
             cleanup_needed: Shared::new(AtomicBool::new(false)),
         })
@@ -309,12 +308,12 @@ impl AsyncHydraSdr {
 
     async fn antennas(&self, direction: Direction, channel: usize) -> Result<Vec<String>, Error> {
         check_rx(direction, channel)?;
-        Ok(self.inner.lock().await.antennas())
+        Ok(self.inner.antennas())
     }
 
     async fn antenna(&self, direction: Direction, channel: usize) -> Result<String, Error> {
         check_rx(direction, channel)?;
-        self.inner.lock().await.antenna()
+        self.inner.antenna()
     }
 
     async fn set_antenna(
@@ -324,15 +323,13 @@ impl AsyncHydraSdr {
         name: &str,
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        let port =
-            self.inner
-                .lock()
-                .await
-                .rf_port_for_antenna(name)
-                .ok_or(Error::invalid_argument(
-                    "antenna",
-                    "antenna is not available on this HydraSDR device",
-                ))?;
+        let port = self
+            .inner
+            .rf_port_for_antenna(name)
+            .ok_or(Error::invalid_argument(
+                "antenna",
+                "antenna is not available on this HydraSDR device",
+            ))?;
         let mut session = self.lease_idle_session().await?;
         session.session_mut().set_rf_port(port).await
     }
@@ -355,7 +352,7 @@ impl AsyncHydraSdr {
 
     async fn agc_enabled(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
         check_rx(direction, channel)?;
-        self.inner.lock().await.agc_enabled()
+        self.inner.agc_enabled()
     }
 
     async fn gain_elements(
@@ -366,8 +363,6 @@ impl AsyncHydraSdr {
         check_rx(direction, channel)?;
         Ok(self
             .inner
-            .lock()
-            .await
             .gains
             .iter()
             .map(|gain| gain.name.to_string())
@@ -393,7 +388,7 @@ impl AsyncHydraSdr {
 
     async fn gain(&self, direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
         check_rx(direction, channel)?;
-        self.inner.lock().await.overall_gain()
+        self.inner.overall_gain()
     }
 
     async fn gain_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
@@ -434,7 +429,7 @@ impl AsyncHydraSdr {
             "hydrasdr",
             "invalid HydraSDR argument",
         ))?;
-        self.inner.lock().await.gain_value(gain_type)
+        self.inner.gain_value(gain_type)
     }
 
     async fn gain_element_range(
@@ -449,8 +444,6 @@ impl AsyncHydraSdr {
             "invalid HydraSDR argument",
         ))?;
         self.inner
-            .lock()
-            .await
             .gain_range(gain_type)
             .ok_or(Error::invalid_argument(
                 "hydrasdr",
@@ -495,10 +488,9 @@ impl AsyncHydraSdr {
     ) -> Result<Range, Error> {
         check_rx(direction, channel)?;
         if name == "TUNER" {
-            let inner = self.inner.lock().await;
             Ok(Range::new(vec![RangeItem::Interval(
-                inner.min_frequency,
-                inner.max_frequency,
+                self.inner.min_frequency,
+                self.inner.max_frequency,
             )]))
         } else {
             Err(Error::invalid_argument(
@@ -521,7 +513,7 @@ impl AsyncHydraSdr {
                 "invalid HydraSDR argument",
             ));
         }
-        self.inner.lock().await.frequency()
+        self.inner.frequency()
     }
 
     async fn set_component_frequency(
@@ -546,7 +538,7 @@ impl AsyncHydraSdr {
 
     async fn sample_rate(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
         check_rx(direction, channel)?;
-        self.inner.lock().await.sample_rate()
+        self.inner.sample_rate()
     }
 
     async fn set_sample_rate(
@@ -569,8 +561,7 @@ impl AsyncHydraSdr {
         channel: usize,
     ) -> Result<Range, Error> {
         check_rx(direction, channel)?;
-        let inner = self.inner.lock().await;
-        sample_rate_range(&inner.sample_rates)
+        sample_rate_range(&self.inner.sample_rates)
     }
 }
 

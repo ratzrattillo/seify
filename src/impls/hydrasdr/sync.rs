@@ -20,7 +20,7 @@ use crate::{
 pub struct HydraSdr {
     session_slot: Arc<Mutex<Option<SyncHydraSession>>>,
     serial: Option<u64>,
-    inner: Arc<Mutex<ReceiverContext>>,
+    inner: Arc<ReceiverContext>,
     streamer_claimed: Arc<AtomicBool>,
 }
 /// Exclusively claimed HydraSDR RFOne receive streamer.
@@ -149,7 +149,7 @@ impl HydraSdr {
         Ok(Self {
             session_slot: Arc::new(Mutex::new(Some(SyncHydraSession::Device(Box::new(dev))))),
             serial,
-            inner: Arc::new(Mutex::new(receiver_context)),
+            inner: Arc::new(receiver_context),
             streamer_claimed: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -198,25 +198,23 @@ impl HydraSdr {
 
     fn antennas(&self, direction: Direction, channel: usize) -> Result<Vec<String>, Error> {
         check_rx(direction, channel)?;
-        Ok(self.inner.lock().unwrap().antennas())
+        Ok(self.inner.antennas())
     }
 
     fn antenna(&self, direction: Direction, channel: usize) -> Result<String, Error> {
         check_rx(direction, channel)?;
-        self.inner.lock().unwrap().antenna()
+        self.inner.antenna()
     }
 
     fn set_antenna(&self, direction: Direction, channel: usize, name: &str) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        let port =
-            self.inner
-                .lock()
-                .unwrap()
-                .rf_port_for_antenna(name)
-                .ok_or(Error::invalid_argument(
-                    "antenna",
-                    "antenna is not available on this HydraSDR device",
-                ))?;
+        let port = self
+            .inner
+            .rf_port_for_antenna(name)
+            .ok_or(Error::invalid_argument(
+                "antenna",
+                "antenna is not available on this HydraSDR device",
+            ))?;
         self.with_idle_session(|session| session.set_rf_port(port))
     }
 
@@ -237,15 +235,13 @@ impl HydraSdr {
 
     fn agc_enabled(&self, direction: Direction, channel: usize) -> Result<bool, Error> {
         check_rx(direction, channel)?;
-        self.inner.lock().unwrap().agc_enabled()
+        self.inner.agc_enabled()
     }
 
     fn gain_elements(&self, direction: Direction, channel: usize) -> Result<Vec<String>, Error> {
         check_rx(direction, channel)?;
         Ok(self
             .inner
-            .lock()
-            .unwrap()
             .gains
             .iter()
             .map(|gain| gain.name.to_string())
@@ -269,7 +265,7 @@ impl HydraSdr {
 
     fn gain(&self, direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
         check_rx(direction, channel)?;
-        self.inner.lock().unwrap().overall_gain()
+        self.inner.overall_gain()
     }
 
     fn gain_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
@@ -309,7 +305,7 @@ impl HydraSdr {
             "hydrasdr",
             "invalid HydraSDR argument",
         ))?;
-        self.inner.lock().unwrap().gain_value(gain_type)
+        self.inner.gain_value(gain_type)
     }
 
     fn gain_element_range(
@@ -324,8 +320,6 @@ impl HydraSdr {
             "invalid HydraSDR argument",
         ))?;
         self.inner
-            .lock()
-            .unwrap()
             .gain_range(gain_type)
             .ok_or(Error::invalid_argument(
                 "hydrasdr",
@@ -368,10 +362,9 @@ impl HydraSdr {
     ) -> Result<Range, Error> {
         check_rx(direction, channel)?;
         if name == "TUNER" {
-            let inner = self.inner.lock().unwrap();
             Ok(Range::new(vec![RangeItem::Interval(
-                inner.min_frequency,
-                inner.max_frequency,
+                self.inner.min_frequency,
+                self.inner.max_frequency,
             )]))
         } else {
             Err(Error::invalid_argument(
@@ -394,7 +387,7 @@ impl HydraSdr {
                 "invalid HydraSDR argument",
             ));
         }
-        self.inner.lock().unwrap().frequency()
+        self.inner.frequency()
     }
 
     fn set_component_frequency(
@@ -413,7 +406,7 @@ impl HydraSdr {
 
     fn sample_rate(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
         check_rx(direction, channel)?;
-        self.inner.lock().unwrap().sample_rate()
+        self.inner.sample_rate()
     }
 
     fn set_sample_rate(
@@ -431,8 +424,7 @@ impl HydraSdr {
 
     fn get_sample_rate_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
         check_rx(direction, channel)?;
-        let rates = &self.inner.lock().unwrap().sample_rates;
-        sample_rate_range(rates)
+        sample_rate_range(&self.inner.sample_rates)
     }
 }
 
