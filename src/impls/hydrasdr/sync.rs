@@ -11,8 +11,8 @@ use num_complex::Complex32;
 use super::common::*;
 use crate::Direction::*;
 use crate::{
-    AgcControl, AntennaControl, Args, BandwidthControl, Capability, DeviceInfo, Direction, Driver,
-    Error, FrequencyControl, GainControl, Range, RangeItem, RxDevice, SampleRateControl,
+    AgcControl, AntennaControl, Args, Capability, DeviceInfo, Direction, Driver, Error,
+    FrequencyControl, GainControl, Range, RangeItem, RxDevice, SampleRateControl,
 };
 
 /// HydraSDR RFOne device backend.
@@ -76,15 +76,6 @@ impl SyncHydraSession {
         match self {
             Self::Device(device) => device.set_sample_rate_hz(sample_rate_hz).wait(),
             Self::Stream(stream) => stream.set_sample_rate_hz(sample_rate_hz),
-            Self::Disconnected => return Err(Error::DeviceDisconnected),
-        }
-        .map_err(map_hydrasdr_error)
-    }
-
-    fn set_bandwidth_hz(&mut self, bandwidth_hz: u32) -> Result<(), Error> {
-        match self {
-            Self::Device(device) => device.set_bandwidth_hz(bandwidth_hz).wait(),
-            Self::Stream(stream) => stream.set_bandwidth_hz(bandwidth_hz),
             Self::Disconnected => return Err(Error::DeviceDisconnected),
         }
         .map_err(map_hydrasdr_error)
@@ -156,9 +147,7 @@ impl HydraSdr {
         let selector = device_selector(&args)?;
         let (mut dev, serial) = open_selected_device(selector)?;
         let sample_rates = dev.sample_rates().wait().map_err(map_hydrasdr_error)?;
-        let bandwidths = dev.bandwidths().wait().unwrap_or_default();
-        let receiver_context =
-            ReceiverContext::from_device_info(dev.info(), sample_rates, bandwidths);
+        let receiver_context = ReceiverContext::from_device_info(dev.info(), sample_rates);
 
         Ok(Self {
             session_slot: Arc::new(Mutex::new(Some(SyncHydraSession::Device(Box::new(dev))))),
@@ -448,25 +437,6 @@ impl HydraSdr {
         let rates = &self.inner.lock().unwrap().sample_rates;
         sample_rate_range(rates)
     }
-
-    fn bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
-        check_rx(direction, channel)?;
-        self.inner.lock().unwrap().bandwidth()
-    }
-
-    fn set_bandwidth(&self, direction: Direction, channel: usize, bw: f64) -> Result<(), Error> {
-        let range = self.get_bandwidth_range(direction, channel)?;
-        if !range.contains(bw) {
-            return Err(Error::out_of_range("bandwidth", range, bw));
-        }
-        self.with_idle_session(|session| session.set_bandwidth_hz(bw as u32))
-    }
-
-    fn get_bandwidth_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
-        check_rx(direction, channel)?;
-        let bandwidths = &self.inner.lock().unwrap().bandwidths;
-        bandwidth_range(bandwidths)
-    }
 }
 
 impl DeviceInfo for HydraSdr {
@@ -492,7 +462,7 @@ impl DeviceInfo for HydraSdr {
 }
 
 crate::impl_dyn_device_backend!(
-    HydraSdr => [rx, antenna, agc, gain, frequency, sample_rate, bandwidth]
+    HydraSdr => [rx, antenna, agc, gain, frequency, sample_rate]
 );
 crate::registry::impl_typed_device_backend!(HydraSdr, Driver::HydraSdr);
 
@@ -678,20 +648,6 @@ impl SampleRateControl for HydraSdr {
 
     fn get_sample_rate_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
         HydraSdr::get_sample_rate_range(self, direction, channel)
-    }
-}
-
-impl BandwidthControl for HydraSdr {
-    fn bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
-        HydraSdr::bandwidth(self, direction, channel)
-    }
-
-    fn set_bandwidth(&self, direction: Direction, channel: usize, bw: f64) -> Result<(), Error> {
-        HydraSdr::set_bandwidth(self, direction, channel, bw)
-    }
-
-    fn get_bandwidth_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
-        HydraSdr::get_bandwidth_range(self, direction, channel)
     }
 }
 

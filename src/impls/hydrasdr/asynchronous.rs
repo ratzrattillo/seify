@@ -13,9 +13,9 @@ use crate::Direction::*;
 use crate::{
     async_compat::{timeout_from_micros, with_timeout, Shared, TimeoutResult},
     dev::AsyncTypedDeviceBackend,
-    Args, AsyncAgcControl, AsyncAntennaControl, AsyncBandwidthControl, AsyncDeviceInfo,
-    AsyncFrequencyControl, AsyncGainControl, AsyncRxDevice, AsyncSampleRateControl, Capability,
-    Direction, Driver, Error, Range, RangeItem,
+    Args, AsyncAgcControl, AsyncAntennaControl, AsyncDeviceInfo, AsyncFrequencyControl,
+    AsyncGainControl, AsyncRxDevice, AsyncSampleRateControl, Capability, Direction, Driver, Error,
+    Range, RangeItem,
 };
 
 /// Asynchronous HydraSDR RFOne device backend.
@@ -86,15 +86,6 @@ impl AsyncHydraSession {
         match self {
             Self::Device(device) => device.set_sample_rate_hz(sample_rate_hz).await,
             Self::Stream(stream) => stream.set_sample_rate_hz(sample_rate_hz).await,
-            Self::Disconnected => return Err(Error::DeviceDisconnected),
-        }
-        .map_err(map_hydrasdr_error)
-    }
-
-    async fn set_bandwidth_hz(&mut self, bandwidth_hz: u32) -> Result<(), Error> {
-        match self {
-            Self::Device(device) => device.set_bandwidth_hz(bandwidth_hz).await,
-            Self::Stream(stream) => stream.set_bandwidth_hz(bandwidth_hz).await,
             Self::Disconnected => return Err(Error::DeviceDisconnected),
         }
         .map_err(map_hydrasdr_error)
@@ -270,9 +261,7 @@ impl AsyncHydraSdr {
         let selector = device_selector(&args)?;
         let (mut dev, serial) = open_selected_device_async(selector).await?;
         let sample_rates = dev.sample_rates().await.map_err(map_hydrasdr_error)?;
-        let bandwidths = dev.bandwidths().await.unwrap_or_default();
-        let receiver_context =
-            ReceiverContext::from_device_info(dev.info(), sample_rates, bandwidths);
+        let receiver_context = ReceiverContext::from_device_info(dev.info(), sample_rates);
 
         Ok(Self {
             session_slot: Shared::new(AsyncSessionSlot::new(AsyncHydraSession::Device(Box::new(
@@ -586,35 +575,6 @@ impl AsyncHydraSdr {
         let inner = self.inner.lock().await;
         sample_rate_range(&inner.sample_rates)
     }
-
-    async fn bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
-        check_rx(direction, channel)?;
-        self.inner.lock().await.bandwidth()
-    }
-
-    async fn set_bandwidth(
-        &self,
-        direction: Direction,
-        channel: usize,
-        bw: f64,
-    ) -> Result<(), Error> {
-        let range = self.get_bandwidth_range(direction, channel).await?;
-        if !range.contains(bw) {
-            return Err(Error::out_of_range("bandwidth", range, bw));
-        }
-        let mut session = self.lease_idle_session().await?;
-        session.session_mut().set_bandwidth_hz(bw as u32).await
-    }
-
-    async fn get_bandwidth_range(
-        &self,
-        direction: Direction,
-        channel: usize,
-    ) -> Result<Range, Error> {
-        check_rx(direction, channel)?;
-        let inner = self.inner.lock().await;
-        bandwidth_range(&inner.bandwidths)
-    }
 }
 
 impl AsyncDeviceInfo for AsyncHydraSdr {
@@ -640,7 +600,7 @@ impl AsyncDeviceInfo for AsyncHydraSdr {
 }
 
 crate::impl_dyn_async_device_backend!(
-    AsyncHydraSdr => [rx, antenna, agc, gain, frequency, sample_rate, bandwidth]
+    AsyncHydraSdr => [rx, antenna, agc, gain, frequency, sample_rate]
 );
 
 impl AsyncRxDevice for AsyncHydraSdr {
@@ -851,29 +811,6 @@ impl AsyncSampleRateControl for AsyncHydraSdr {
         channel: usize,
     ) -> Result<Range, Error> {
         AsyncHydraSdr::get_sample_rate_range(self, direction, channel).await
-    }
-}
-
-impl AsyncBandwidthControl for AsyncHydraSdr {
-    async fn async_bandwidth(&self, direction: Direction, channel: usize) -> Result<f64, Error> {
-        AsyncHydraSdr::bandwidth(self, direction, channel).await
-    }
-
-    async fn async_set_bandwidth(
-        &self,
-        direction: Direction,
-        channel: usize,
-        bw: f64,
-    ) -> Result<(), Error> {
-        AsyncHydraSdr::set_bandwidth(self, direction, channel, bw).await
-    }
-
-    async fn async_get_bandwidth_range(
-        &self,
-        direction: Direction,
-        channel: usize,
-    ) -> Result<Range, Error> {
-        AsyncHydraSdr::get_bandwidth_range(self, direction, channel).await
     }
 }
 

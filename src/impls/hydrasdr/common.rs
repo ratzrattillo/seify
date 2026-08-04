@@ -1,6 +1,5 @@
 use hydrasdr_rs::{
-    ActiveState, Bandwidth, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, GainStage, RfPort,
-    RfPortInfo,
+    ActiveState, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, GainStage, RfPort, RfPortInfo,
 };
 
 use crate::Direction::*;
@@ -13,15 +12,10 @@ const VGA_GAIN_MAX_DB: u8 = 15;
 pub(super) struct ReceiverContext {
     pub(super) active: ActiveState,
     pub(super) sample_rates: Vec<u32>,
-    pub(super) bandwidths: Vec<u32>,
     pub(super) gains: Vec<GainElement>,
     pub(super) rf_ports: Vec<RfPortInfo>,
     pub(super) min_frequency: f64,
     pub(super) max_frequency: f64,
-}
-
-pub(super) fn bandwidth_range(bandwidths: &[u32]) -> Result<Range, Error> {
-    discrete_range(bandwidths, Capability::Bandwidth)
 }
 
 pub(super) fn sample_rate_range(sample_rates: &[u32]) -> Result<Range, Error> {
@@ -41,15 +35,10 @@ fn discrete_range(values: &[u32], capability: Capability) -> Result<Range, Error
 }
 
 impl ReceiverContext {
-    pub(super) fn from_device_info(
-        info: &DeviceInfo,
-        sample_rates: Vec<u32>,
-        bandwidths: Vec<u32>,
-    ) -> Self {
+    pub(super) fn from_device_info(info: &DeviceInfo, sample_rates: Vec<u32>) -> Self {
         Self {
             active: info.active_state.clone(),
             sample_rates,
-            bandwidths,
             gains: gain_elements(),
             rf_ports: info.rf_ports.clone(),
             min_frequency: info.min_frequency as f64,
@@ -97,13 +86,6 @@ impl ReceiverContext {
             .sample_rate_hz()
             .map(|value| value as f64)
             .map_err(map_hydrasdr_error)
-    }
-
-    pub(super) fn bandwidth(&self) -> Result<f64, Error> {
-        match self.active.bandwidth().map_err(map_hydrasdr_error)? {
-            Bandwidth::ManualHz(value) => Ok(value as f64),
-            Bandwidth::Auto => Err(Error::unsupported(Capability::DriverOperation)),
-        }
     }
 
     pub(super) fn agc_enabled(&self) -> Result<bool, Error> {
@@ -316,19 +298,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_bandwidth_list_is_unsupported() {
-        assert!(bandwidth_range(&[]).unwrap_err().is_unsupported());
-    }
-
-    #[test]
-    fn bandwidth_range_contains_reported_values_only() {
-        let range = bandwidth_range(&[1_750_000, 2_500_000]).unwrap();
-        assert!(range.contains(1_750_000.0));
-        assert!(range.contains(2_500_000.0));
-        assert!(!range.contains(2_000_000.0));
-    }
-
-    #[test]
     fn empty_sample_rate_list_is_unsupported() {
         assert!(sample_rate_range(&[]).unwrap_err().is_unsupported());
     }
@@ -356,7 +325,6 @@ mod tests {
         let state = ReceiverContext {
             active: ActiveState::default(),
             sample_rates: Vec::new(),
-            bandwidths: Vec::new(),
             gains: gain_elements(),
             rf_ports: Vec::new(),
             min_frequency: 0.0,
@@ -371,7 +339,6 @@ mod tests {
         let context = ReceiverContext {
             active: ActiveState::default(),
             sample_rates: Vec::new(),
-            bandwidths: Vec::new(),
             gains: gain_elements(),
             rf_ports: vec![RfPortInfo {
                 port: RfPort::Rx0,
