@@ -299,11 +299,31 @@ mod web {
         let padding = 24.0;
         let plot_width = width - 2.0 * padding;
         let plot_height = height - 2.0 * padding;
-        let max = samples
+        let count = samples.len() as f64;
+        let mean_i = samples.iter().map(|sample| sample.re as f64).sum::<f64>() / count;
+        let mean_q = samples.iter().map(|sample| sample.im as f64).sum::<f64>() / count;
+        let rms = (samples
+            .iter()
+            .map(|sample| sample.norm_sqr() as f64)
+            .sum::<f64>()
+            / count)
+            .sqrt();
+        let peak = samples
             .iter()
             .map(|sample| sample.norm() as f64)
-            .fold(0.0_f64, f64::max)
-            .max(f64::EPSILON);
+            .fold(0.0_f64, f64::max);
+        // A normalized full-scale complex sinusoid has unit magnitude. Values
+        // above one can occur near the square I/Q quantizer corners and clip at
+        // the top of this diagnostic plot.
+        let full_scale = 1.0;
+        let rms_dbfs = 20.0 * (rms / full_scale).max(f64::EPSILON).log10();
+        let peak_dbfs = 20.0 * (peak / full_scale).max(f64::EPSILON).log10();
+        set_text(
+            "plot-summary",
+            &format!(
+                "Fixed full-scale magnitude · mean I {mean_i:.4}, mean Q {mean_q:.4}, RMS {rms_dbfs:.1} dBFS, peak {peak_dbfs:.1} dBFS"
+            ),
+        );
 
         context.set_fill_style_str("#070b0f");
         context.fill_rect(0.0, 0.0, width, height);
@@ -326,7 +346,8 @@ mod web {
             } else {
                 padding + plot_width * index as f64 / (samples.len() - 1) as f64
             };
-            let y = padding + plot_height * (1.0 - sample.norm() as f64 / max);
+            let magnitude = (sample.norm() as f64 / full_scale).clamp(0.0, 1.0);
+            let y = padding + plot_height * (1.0 - magnitude);
             if index == 0 {
                 context.move_to(x, y);
             } else {
