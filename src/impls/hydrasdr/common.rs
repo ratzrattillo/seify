@@ -62,9 +62,7 @@ impl ReceiverContext {
     }
 
     pub(super) fn antenna(&self, config: &Config) -> Result<String, Error> {
-        let active = config
-            .rf_port()
-            .ok_or_else(|| Error::unsupported(Capability::Antenna))?;
+        let active = config.rf_port();
         self.rf_ports
             .iter()
             .find(|info| info.port == active)
