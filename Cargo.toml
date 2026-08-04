@@ -1,6 +1,6 @@
 [package]
 name = "seify"
-version = "0.22.0-dev"
+version = "0.22.0"
 description = "Shiny Samples from your Rusty SDR"
 documentation = "https://docs.rs/seify/"
 edition = "2021"
@@ -26,7 +26,7 @@ required-features = ["rtlsdr"]
 
 [dependencies]
 futures = "0.3"
-hydrasdr-rs = { version = "0.3.0", optional = true }
+hydrasdr-rs = { version = "0.4.0", optional = true }
 log = "0.4"
 nom = "8.0"
 num-complex = "0.4"
