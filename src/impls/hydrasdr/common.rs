@@ -100,14 +100,18 @@ impl ReceiverContext {
     }
 
     pub(super) fn overall_gain(&self) -> Result<Option<f64>, Error> {
-        [GainType::Lna, GainType::Mixer, GainType::Vga]
+        let gain = [GainType::Lna, GainType::Mixer, GainType::Vga]
             .into_iter()
             .try_fold(Some(0.0), |sum, gain_type| {
-                Ok(match (sum, self.gain_value(gain_type)?) {
+                Ok::<_, Error>(match (sum, self.gain_value(gain_type)?) {
                     (Some(sum), Some(value)) => Some(sum + value),
                     _ => None,
                 })
-            })
+            })?;
+        if gain.is_some() && self.agc_enabled()? {
+            return Ok(None);
+        }
+        Ok(gain)
     }
 
     pub(super) fn gain_range(&self, gain_type: GainType) -> Option<Range> {
