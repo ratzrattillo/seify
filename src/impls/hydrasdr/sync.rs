@@ -27,7 +27,7 @@ pub struct HydraSdr {
 pub struct RxStreamer {
     stream: RxStream,
     active: bool,
-    stop_required: bool,
+    cleanup_required: bool,
 }
 
 trait HydraSdrDeviceControl {
@@ -561,14 +561,14 @@ impl RxStreamer {
         Self {
             stream,
             active: false,
-            stop_required: false,
+            cleanup_required: false,
         }
     }
 
     fn stop(&mut self) -> Result<(), Error> {
-        if self.stop_required {
+        if self.cleanup_required {
             self.stream.stop().wait().map_err(map_hydrasdr_error)?;
-            self.stop_required = false;
+            self.cleanup_required = false;
         }
         self.active = false;
         Ok(())
@@ -587,7 +587,7 @@ impl crate::RxStreamer for RxStreamer {
         if self.active {
             return Ok(());
         }
-        self.stop_required = true;
+        self.cleanup_required = true;
         self.stream.start().wait().map_err(map_hydrasdr_error)?;
         self.active = true;
         Ok(())
@@ -625,9 +625,9 @@ impl crate::RxStreamer for RxStreamer {
 
 impl Drop for RxStreamer {
     fn drop(&mut self) {
-        if self.stop_required {
+        if self.cleanup_required {
             let _ = self.stream.stop().wait();
-            self.stop_required = false;
+            self.cleanup_required = false;
         }
         self.active = false;
     }

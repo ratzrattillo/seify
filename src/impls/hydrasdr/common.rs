@@ -338,6 +338,7 @@ pub(super) fn map_hydrasdr_error(err: hydrasdr_rs::Error) -> Error {
     match err.kind() {
         ErrorKind::InvalidConfig => Error::invalid_argument("hydrasdr", err.to_string()),
         ErrorKind::NotFound => Error::DeviceNotFound,
+        ErrorKind::DeviceClosed => Error::DeviceDisconnected,
         ErrorKind::Busy => Error::Busy,
         ErrorKind::Unsupported => Error::unsupported(Capability::DriverOperation),
         ErrorKind::StreamClosed => Error::StreamClosed,
@@ -352,6 +353,14 @@ mod tests {
     #[test]
     fn empty_sample_rate_list_is_unsupported() {
         assert!(sample_rate_range(&[]).unwrap_err().is_unsupported());
+    }
+
+    #[test]
+    fn closed_hydrasdr_maps_to_disconnected_device() {
+        assert!(matches!(
+            map_hydrasdr_error(hydrasdr_rs::Error::DeviceClosed),
+            Error::DeviceDisconnected
+        ));
     }
 
     #[test]

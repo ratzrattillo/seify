@@ -35,7 +35,7 @@ pub struct AsyncHydraSdrRxStreamer {
     abandoned_stream_slot: Shared<AsyncSlot<RxStream>>,
     stream: Option<RxStream>,
     active: bool,
-    stop_required: bool,
+    cleanup_required: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -732,7 +732,7 @@ impl AsyncHydraSdrRxStreamer {
             abandoned_stream_slot,
             stream: Some(stream),
             active: false,
-            stop_required: false,
+            cleanup_required: false,
         }
     }
 }
@@ -749,7 +749,7 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         if self.active {
             return Ok(());
         }
-        self.stop_required = true;
+        self.cleanup_required = true;
         self.stream
             .as_mut()
             .ok_or(Error::DeviceDisconnected)?
@@ -764,7 +764,7 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         if time_ns.is_some() {
             return Err(Error::unsupported(Capability::TimedDeactivation));
         }
-        if self.stop_required {
+        if self.cleanup_required {
             self.active = false;
             self.stream
                 .as_mut()
@@ -772,7 +772,7 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
                 .stop()
                 .await
                 .map_err(map_hydrasdr_error)?;
-            self.stop_required = false;
+            self.cleanup_required = false;
         }
         self.active = false;
         Ok(())
@@ -808,7 +808,7 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
 
 impl Drop for AsyncHydraSdrRxStreamer {
     fn drop(&mut self) {
-        if self.stop_required {
+        if self.cleanup_required {
             if let Some(stream) = self.stream.take() {
                 let result = self.abandoned_stream_slot.put(stream);
                 debug_assert!(
