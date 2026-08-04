@@ -29,6 +29,15 @@ async fn exercise_lifecycle() -> Result<(), Error> {
     rx.frequency().set(frequency).await?;
     rx.sample_rate().set(sample_rate).await?;
 
+    assert!(!rx.agc().enabled().await?);
+    assert_eq!(rx.gain().elements().await?, ["LNA", "MIXER", "VGA"]);
+    assert_eq!(rx.gain().value().await?, None);
+    rx.gain().set(20.0).await?;
+    assert_eq!(rx.gain().value().await?, Some(20.0));
+    assert_eq!(rx.gain().element("LNA").value().await?, Some(14.0));
+    assert_eq!(rx.gain().element("MIXER").value().await?, Some(6.0));
+    assert_eq!(rx.gain().element("VGA").value().await?, Some(0.0));
+
     let mut stream = rx.streamer().await?;
     stream.activate().await?;
     read_samples(&mut stream).await?;

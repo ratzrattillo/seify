@@ -363,15 +363,8 @@ impl AsyncHydraSdr {
         agc: bool,
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        let gain = GainConfig::Manual {
-            lna: None,
-            mixer: None,
-            vga: None,
-            lna_agc: Some(agc),
-            mixer_agc: Some(agc),
-        };
         let mut session = self.lease_idle_session().await?;
-        session.session_mut().set_gain(gain).await?;
+        session.session_mut().set_gain(agc_gain_config(agc)).await?;
         let mut inner = self.inner.lock().await;
         inner.set_agc_cached(agc);
         Ok(())
@@ -399,17 +392,31 @@ impl AsyncHydraSdr {
     }
 
     async fn set_gain(&self, direction: Direction, channel: usize, gain: f64) -> Result<(), Error> {
-        self.set_gain_element(direction, channel, "LINEARITY", gain)
-            .await
+        check_rx(direction, channel)?;
+        let range = overall_gain_range();
+        if !range.contains(gain) {
+            return Err(Error::out_of_range("gain", range, gain));
+        }
+
+        let mut session = self.lease_idle_session().await?;
+        for (gain_type, value) in distribute_overall_gain(gain) {
+            session
+                .session_mut()
+                .set_gain(gain_type.update(value))
+                .await?;
+            self.inner.lock().await.set_gain_cached(gain_type, value);
+        }
+        Ok(())
     }
 
     async fn gain(&self, direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
-        self.gain_element(direction, channel, "LINEARITY").await
+        check_rx(direction, channel)?;
+        Ok(self.inner.lock().await.overall_gain())
     }
 
     async fn gain_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
-        self.gain_element_range(direction, channel, "LINEARITY")
-            .await
+        check_rx(direction, channel)?;
+        Ok(overall_gain_range())
     }
 
     async fn set_gain_element(
@@ -1091,6 +1098,7 @@ async fn open_selected_device_async(
         DeviceSelector::First => HydraSdrDevice::builder()
             .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
+            .gain(agc_gain_config(false))
             .open()
             .await
             .map(|dev| {
@@ -1102,6 +1110,7 @@ async fn open_selected_device_async(
             .serial(serial)
             .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
+            .gain(agc_gain_config(false))
             .open()
             .await
             .map(|dev| (dev, Some(serial)))
@@ -1116,6 +1125,7 @@ async fn open_selected_device_async(
                     .serial(serial)
                     .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
+                    .gain(agc_gain_config(false))
                     .open()
                     .await
                     .map(|dev| (dev, Some(serial)))
@@ -1124,6 +1134,7 @@ async fn open_selected_device_async(
                 HydraSdrDevice::builder()
                     .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
+                    .gain(agc_gain_config(false))
                     .open()
                     .await
                     .map(|dev| {

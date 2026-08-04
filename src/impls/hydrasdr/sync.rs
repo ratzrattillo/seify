@@ -246,14 +246,7 @@ impl HydraSdr {
         agc: bool,
     ) -> Result<(), Error> {
         check_rx(direction, channel)?;
-        let gain = GainConfig::Manual {
-            lna: None,
-            mixer: None,
-            vga: None,
-            lna_agc: Some(agc),
-            mixer_agc: Some(agc),
-        };
-        self.with_idle_session(|session| session.set_gain(gain))?;
+        self.with_idle_session(|session| session.set_gain(agc_gain_config(agc)))?;
         let mut inner = self.inner.lock().unwrap();
         inner.set_agc_cached(agc);
         Ok(())
@@ -277,15 +270,29 @@ impl HydraSdr {
     }
 
     fn set_gain(&self, direction: Direction, channel: usize, gain: f64) -> Result<(), Error> {
-        self.set_gain_element(direction, channel, "LINEARITY", gain)
+        check_rx(direction, channel)?;
+        let range = overall_gain_range();
+        if !range.contains(gain) {
+            return Err(Error::out_of_range("gain", range, gain));
+        }
+
+        self.with_idle_session(|session| {
+            for (gain_type, value) in distribute_overall_gain(gain) {
+                session.set_gain(gain_type.update(value))?;
+                self.inner.lock().unwrap().set_gain_cached(gain_type, value);
+            }
+            Ok(())
+        })
     }
 
     fn gain(&self, direction: Direction, channel: usize) -> Result<Option<f64>, Error> {
-        self.gain_element(direction, channel, "LINEARITY")
+        check_rx(direction, channel)?;
+        Ok(self.inner.lock().unwrap().overall_gain())
     }
 
     fn gain_range(&self, direction: Direction, channel: usize) -> Result<Range, Error> {
-        self.gain_element_range(direction, channel, "LINEARITY")
+        check_rx(direction, channel)?;
+        Ok(overall_gain_range())
     }
 
     fn set_gain_element(
@@ -860,6 +867,7 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
         DeviceSelector::First => HydraSdrDevice::builder()
             .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
+            .gain(agc_gain_config(false))
             .open()
             .wait()
             .map(|dev| {
@@ -871,6 +879,7 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
             .serial(serial)
             .sample_format(SampleFormat::F32Iq)
             .decimation_mode(DecimationMode::HighDefinition)
+            .gain(agc_gain_config(false))
             .open()
             .wait()
             .map(|dev| (dev, Some(serial)))
@@ -885,6 +894,7 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
                     .serial(serial)
                     .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
+                    .gain(agc_gain_config(false))
                     .open()
                     .wait()
                     .map(|dev| (dev, Some(serial)))
@@ -893,6 +903,7 @@ fn open_selected_device(selector: DeviceSelector) -> Result<(HydraSdrDevice, Opt
                 HydraSdrDevice::builder()
                     .sample_format(SampleFormat::F32Iq)
                     .decimation_mode(DecimationMode::HighDefinition)
+                    .gain(agc_gain_config(false))
                     .open()
                     .wait()
                     .map(|dev| {

@@ -1,11 +1,12 @@
-use hydrasdr_rs::{
-    Bandwidth, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, GainPreset, RfPort,
-};
+use hydrasdr_rs::{Bandwidth, DeviceDescriptor, DeviceInfo, ErrorKind, GainConfig, RfPort};
 
 use crate::Direction::*;
 use crate::{Args, Capability, Direction, Error, Range, RangeItem};
 
 pub(super) const F32_RX_MTU: usize = hydrasdr_rs::MAX_F32_IQ_SAMPLES_PER_TRANSFER;
+const LNA_GAIN_MAX_DB: u8 = 14;
+const MIXER_GAIN_MAX_DB: u8 = 15;
+const VGA_GAIN_MAX_DB: u8 = 15;
 pub(super) struct ReceiverState {
     pub(super) antenna: &'static str,
     pub(super) frequency: Option<f64>,
@@ -77,7 +78,7 @@ impl ReceiverState {
             .iter_mut()
             .find(|cached| cached.gain_type == gain_type)
         {
-            cached.value = value;
+            cached.value = Some(value);
         }
     }
 
@@ -85,7 +86,13 @@ impl ReceiverState {
         self.gains
             .iter()
             .find(|cached| cached.gain_type == gain_type)
-            .map(|cached| cached.value)
+            .and_then(|cached| cached.value)
+    }
+
+    pub(super) fn overall_gain(&self) -> Option<f64> {
+        self.gains
+            .iter()
+            .try_fold(0.0, |sum, cached| Some(sum + cached.value?))
     }
 
     pub(super) fn gain_range(&self, gain_type: GainType) -> Option<Range> {
@@ -99,7 +106,7 @@ impl ReceiverState {
 pub(super) struct GainCache {
     pub(super) name: &'static str,
     pub(super) gain_type: GainType,
-    pub(super) value: f64,
+    pub(super) value: Option<f64>,
     pub(super) range: Range,
 }
 
@@ -108,16 +115,12 @@ pub(super) enum GainType {
     Lna,
     Mixer,
     Vga,
-    Linearity,
-    Sensitivity,
 }
 
 impl GainType {
     pub(super) fn update(self, gain: f64) -> GainConfig {
         let gain = gain.round() as u8;
         match self {
-            Self::Linearity => GainConfig::Preset(GainPreset::Linearity(gain)),
-            Self::Sensitivity => GainConfig::Preset(GainPreset::Sensitivity(gain)),
             Self::Lna => GainConfig::Manual {
                 lna: Some(gain),
                 mixer: None,
@@ -141,6 +144,34 @@ impl GainType {
             },
         }
     }
+}
+
+pub(super) fn agc_gain_config(enabled: bool) -> GainConfig {
+    GainConfig::Manual {
+        lna: None,
+        mixer: None,
+        vga: None,
+        lna_agc: Some(enabled),
+        mixer_agc: Some(enabled),
+    }
+}
+
+pub(super) fn overall_gain_range() -> Range {
+    let max = LNA_GAIN_MAX_DB + MIXER_GAIN_MAX_DB + VGA_GAIN_MAX_DB;
+    Range::new(vec![RangeItem::Step(0.0, f64::from(max), 1.0)])
+}
+
+pub(super) fn distribute_overall_gain(mut gain: f64) -> [(GainType, f64); 3] {
+    let lna = gain.min(f64::from(LNA_GAIN_MAX_DB));
+    gain -= lna;
+    let mixer = gain.min(f64::from(MIXER_GAIN_MAX_DB));
+    gain -= mixer;
+    let vga = gain.min(f64::from(VGA_GAIN_MAX_DB));
+    [
+        (GainType::Lna, lna),
+        (GainType::Mixer, mixer),
+        (GainType::Vga, vga),
+    ]
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,23 +205,19 @@ pub(super) fn gain_type(name: &str) -> Option<GainType> {
         "LNA" => Some(GainType::Lna),
         "MIXER" => Some(GainType::Mixer),
         "VGA" => Some(GainType::Vga),
-        "LINEARITY" => Some(GainType::Linearity),
-        "SENSITIVITY" => Some(GainType::Sensitivity),
         _ => None,
     }
 }
 
 pub(super) fn default_gain_cache() -> Vec<GainCache> {
     [
-        ("LNA", GainType::Lna, 0, 14, 8),
-        ("MIXER", GainType::Mixer, 0, 15, 8),
-        ("VGA", GainType::Vga, 0, 15, 8),
-        ("LINEARITY", GainType::Linearity, 0, 21, 10),
-        ("SENSITIVITY", GainType::Sensitivity, 0, 21, 10),
+        ("LNA", GainType::Lna, 0, LNA_GAIN_MAX_DB),
+        ("MIXER", GainType::Mixer, 0, MIXER_GAIN_MAX_DB),
+        ("VGA", GainType::Vga, 0, VGA_GAIN_MAX_DB),
     ]
     .into_iter()
-    .map(|(name, gain_type, min_value, max_value, value)| {
-        gain_cache_item(name, gain_type, min_value, max_value, 1, value)
+    .map(|(name, gain_type, min_value, max_value)| {
+        gain_cache_item(name, gain_type, min_value, max_value, 1)
     })
     .collect()
 }
@@ -229,13 +256,12 @@ pub(super) fn gain_cache_item(
     min_value: u8,
     max_value: u8,
     step_value: u8,
-    value: u8,
 ) -> GainCache {
     let step = step_value.max(1) as f64;
     GainCache {
         name,
         gain_type,
-        value: value as f64,
+        value: None,
         range: Range::new(vec![RangeItem::Step(
             min_value as f64,
             max_value as f64,
@@ -283,6 +309,74 @@ mod tests {
         assert!(range.contains(2_500_000.0));
         assert!(range.contains(10_000_000.0));
         assert!(!range.contains(5_000_000.0));
+    }
+
+    #[test]
+    fn generic_gain_elements_are_physical_stages() {
+        let gains = default_gain_cache();
+        let names = gains.iter().map(|gain| gain.name).collect::<Vec<_>>();
+
+        assert_eq!(names, ["LNA", "MIXER", "VGA"]);
+        assert!(gains.iter().all(|gain| gain.value.is_none()));
+        assert_eq!(gain_type("linearity"), None);
+        assert_eq!(gain_type("sensitivity"), None);
+    }
+
+    #[test]
+    fn overall_gain_uses_sum_of_known_physical_stages() {
+        let mut state = ReceiverState {
+            antenna: "ANT",
+            frequency: None,
+            sample_rate: None,
+            bandwidth: None,
+            sample_rates: Vec::new(),
+            bandwidths: Vec::new(),
+            gains: default_gain_cache(),
+            agc: false,
+            min_frequency: 0.0,
+            max_frequency: 0.0,
+        };
+
+        assert_eq!(state.overall_gain(), None);
+        state.set_gain_cached(GainType::Lna, 8.0);
+        state.set_gain_cached(GainType::Mixer, 9.0);
+        assert_eq!(state.overall_gain(), None);
+        state.set_gain_cached(GainType::Vga, 10.0);
+        assert_eq!(state.overall_gain(), Some(27.0));
+    }
+
+    #[test]
+    fn overall_gain_is_distributed_from_rf_to_baseband() {
+        assert_eq!(
+            distribute_overall_gain(0.0),
+            [
+                (GainType::Lna, 0.0),
+                (GainType::Mixer, 0.0),
+                (GainType::Vga, 0.0),
+            ]
+        );
+        assert_eq!(
+            distribute_overall_gain(20.0),
+            [
+                (GainType::Lna, 14.0),
+                (GainType::Mixer, 6.0),
+                (GainType::Vga, 0.0),
+            ]
+        );
+        assert_eq!(
+            distribute_overall_gain(44.0),
+            [
+                (GainType::Lna, 14.0),
+                (GainType::Mixer, 15.0),
+                (GainType::Vga, 15.0),
+            ]
+        );
+
+        let range = overall_gain_range();
+        assert!(range.contains(0.0));
+        assert!(range.contains(44.0));
+        assert!(!range.contains(10.5));
+        assert!(!range.contains(45.0));
     }
 
     #[test]
