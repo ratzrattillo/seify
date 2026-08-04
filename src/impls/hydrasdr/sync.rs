@@ -612,9 +612,9 @@ impl crate::RxStreamer for RxStreamer {
         let out = &mut buffers[0];
         let read_len = out.len().min(F32_RX_MTU);
         let timeout = if timeout_us < 0 {
-            Duration::MAX
+            None
         } else {
-            Duration::from_micros(timeout_us as u64)
+            Some(Duration::from_micros(timeout_us as u64))
         };
         self.stream
             .read(&mut out[..read_len], timeout)

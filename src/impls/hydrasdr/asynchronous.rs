@@ -1,8 +1,6 @@
-use std::future::IntoFuture;
-use std::time::Duration;
-
 use hydrasdr_rs::{DecimationPolicy, Device as HydraSdrDevice, RxStream};
 use num_complex::Complex32;
+use std::future::IntoFuture;
 
 use super::common::*;
 #[cfg(target_arch = "wasm32")]
@@ -794,7 +792,7 @@ impl crate::AsyncRxStreamer for AsyncHydraSdrRxStreamer {
         let out = &mut buffers[0];
         let stream = self.stream.as_mut().ok_or(Error::DeviceDisconnected)?;
         let read = match with_timeout(
-            stream.read(out, Duration::ZERO).into_future(),
+            stream.read(out, None).into_future(),
             timeout_from_micros(timeout_us),
         )
         .await
