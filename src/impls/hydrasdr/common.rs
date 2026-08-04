@@ -13,8 +13,6 @@ pub(super) struct ReceiverContext {
     pub(super) sample_rates: Vec<u32>,
     pub(super) gains: Vec<GainElement>,
     pub(super) rf_ports: Vec<RfPortInfo>,
-    pub(super) min_frequency: f64,
-    pub(super) max_frequency: f64,
 }
 
 pub(super) fn sample_rate_range(sample_rates: &[u32]) -> Result<Range, Error> {
@@ -39,9 +37,21 @@ impl ReceiverContext {
             sample_rates,
             gains: gain_elements(),
             rf_ports: info.rf_ports.clone(),
-            min_frequency: info.min_frequency as f64,
-            max_frequency: info.max_frequency as f64,
         }
+    }
+
+    pub(super) fn frequency_range(&self) -> Result<Range, Error> {
+        if self.rf_ports.is_empty() {
+            return Err(Error::unsupported(Capability::Frequency));
+        }
+        Ok(Range::new(
+            self.rf_ports
+                .iter()
+                .map(|port| {
+                    RangeItem::Interval(port.min_frequency as f64, port.max_frequency as f64)
+                })
+                .collect(),
+        ))
     }
 
     pub(super) fn antennas(&self) -> Vec<String> {
@@ -345,8 +355,6 @@ mod tests {
             sample_rates: Vec::new(),
             gains: gain_elements(),
             rf_ports: Vec::new(),
-            min_frequency: 0.0,
-            max_frequency: 0.0,
         };
 
         let config = Config::builder()
@@ -375,13 +383,42 @@ mod tests {
                 has_bias_tee: true,
                 bias_tee: None,
             }],
-            min_frequency: 24_000_000.0,
-            max_frequency: 1_800_000_000.0,
         };
 
         assert_eq!(context.antennas(), ["ANT"]);
         assert_eq!(context.rf_port_for_antenna("ant"), Some(RfPort::Rx0));
         assert_eq!(context.rf_port_for_antenna("CABLE1"), None);
+    }
+
+    #[test]
+    fn device_frequency_range_is_the_union_of_rf_port_ranges() {
+        let context = ReceiverContext {
+            sample_rates: Vec::new(),
+            gains: gain_elements(),
+            rf_ports: vec![
+                RfPortInfo {
+                    port: RfPort::Rx0,
+                    name: "LOW",
+                    min_frequency: 24_000_000,
+                    max_frequency: 500_000_000,
+                    has_bias_tee: false,
+                    bias_tee: None,
+                },
+                RfPortInfo {
+                    port: RfPort::Rx1,
+                    name: "HIGH",
+                    min_frequency: 1_000_000_000,
+                    max_frequency: 1_800_000_000,
+                    has_bias_tee: false,
+                    bias_tee: None,
+                },
+            ],
+        };
+
+        let range = context.frequency_range().expect("RF port frequency range");
+        assert!(range.contains(100_000_000.0));
+        assert!(!range.contains(750_000_000.0));
+        assert!(range.contains(1_500_000_000.0));
     }
 
     #[test]

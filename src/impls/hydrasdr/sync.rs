@@ -10,7 +10,7 @@ use super::common::*;
 use crate::Direction::*;
 use crate::{
     AgcControl, AntennaControl, Args, Capability, DeviceInfo, Direction, Driver, Error,
-    FrequencyControl, GainControl, Range, RangeItem, RxDevice, SampleRateControl,
+    FrequencyControl, GainControl, Range, RxDevice, SampleRateControl,
 };
 
 /// HydraSDR RFOne device backend.
@@ -292,10 +292,7 @@ impl HydraSdr {
     ) -> Result<Range, Error> {
         check_rx(direction, channel)?;
         if name == "TUNER" {
-            Ok(Range::new(vec![RangeItem::Interval(
-                self.inner.min_frequency,
-                self.inner.max_frequency,
-            )]))
+            self.inner.frequency_range()
         } else {
             Err(Error::invalid_argument(
                 "hydrasdr",
