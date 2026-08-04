@@ -161,9 +161,9 @@ pub fn timeout_from_micros(timeout_us: i64) -> Option<Duration> {
 
 #[cfg(target_arch = "wasm32")]
 fn duration_millis_ceil(duration: Duration) -> u32 {
-    let millis = duration
-        .as_millis()
-        .saturating_add(u128::from(duration.subsec_nanos() % 1_000_000 != 0));
+    let millis = duration.as_millis().saturating_add(u128::from(
+        !duration.subsec_nanos().is_multiple_of(1_000_000),
+    ));
     millis.min(u128::from(u32::MAX)) as u32
 }
 
