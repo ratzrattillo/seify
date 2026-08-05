@@ -391,6 +391,12 @@ impl Default for AsyncRegistry {
         let mut registry = Self::empty();
 
         #[cfg(all(
+            feature = "hackrf",
+            any(target_arch = "wasm32", feature = "smol", feature = "tokio")
+        ))]
+        registry.register::<crate::impls::AsyncHackRf>();
+
+        #[cfg(all(
             feature = "hydrasdr",
             any(target_arch = "wasm32", feature = "smol", feature = "tokio")
         ))]
@@ -412,7 +418,7 @@ fn requested_driver(args: &Args) -> Result<Option<Driver>, Error> {
 }
 
 fn unavailable_driver(driver: Driver) -> Error {
-    if !matches!(driver, Driver::Dummy | Driver::HydraSdr)
+    if !matches!(driver, Driver::Dummy | Driver::HackRf | Driver::HydraSdr)
         && crate::Registry::default().contains(driver)
     {
         Error::unsupported_reason(
@@ -427,27 +433,34 @@ fn unavailable_driver(driver: Driver) -> Error {
 #[cfg(all(
     test,
     feature = "dummy",
-    feature = "hydrasdr",
+    any(feature = "hackrf", feature = "hydrasdr"),
     any(target_arch = "wasm32", feature = "smol", feature = "tokio")
 ))]
 mod ordering_tests {
     use super::*;
 
     #[test]
-    fn hydrasdr_precedes_the_dummy_fallback() {
+    fn hardware_drivers_precede_the_dummy_fallback() {
         let drivers = AsyncRegistry::default()
             .backends
             .iter()
             .map(RegisteredAsyncDriver::driver)
             .collect::<Vec<_>>();
-
-        assert_eq!(drivers, [Driver::HydraSdr, Driver::Dummy]);
+        let dummy = drivers
+            .iter()
+            .position(|driver| *driver == Driver::Dummy)
+            .expect("dummy backend is enabled");
+        for driver in [Driver::HackRf, Driver::HydraSdr] {
+            if let Some(index) = drivers.iter().position(|candidate| *candidate == driver) {
+                assert!(index < dummy, "{driver:?} should precede Dummy");
+            }
+        }
     }
 }
 
 #[cfg(all(
     test,
-    feature = "hydrasdr",
+    any(feature = "hackrf", feature = "hydrasdr"),
     not(any(feature = "smol", feature = "tokio")),
     not(target_arch = "wasm32")
 ))]
@@ -456,6 +469,28 @@ mod tests {
     use futures::executor::block_on;
 
     #[test]
+    #[cfg(feature = "hackrf")]
+    fn async_registry_reports_disabled_hackrf_without_runtime_feature() {
+        block_on(async {
+            let registry = AsyncRegistry::default();
+
+            assert!(matches!(
+                registry.probe("driver=hackrf").await,
+                Err(Error::DriverFeatureNotEnabled {
+                    driver: Driver::HackRf
+                })
+            ));
+            assert!(matches!(
+                registry.open_args("driver=hackrf").await,
+                Err(Error::DriverFeatureNotEnabled {
+                    driver: Driver::HackRf
+                })
+            ));
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "hydrasdr")]
     fn async_registry_reports_disabled_hydrasdr_without_runtime_feature() {
         block_on(async {
             let registry = AsyncRegistry::default();

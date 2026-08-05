@@ -7,7 +7,8 @@ publish = false
 [workspace]
 
 [features]
-default = ["hydrasdr"]
+default = ["hackrf", "hydrasdr"]
+hackrf = ["seify/hackrf"]
 hydrasdr = ["seify/hydrasdr"]
 
 [dependencies]

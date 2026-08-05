@@ -9,15 +9,16 @@
 //! # Driver features
 //!
 //! The default feature set enables the `soapy` backend. Other backends are
-//! enabled with Cargo features such as `rtlsdr`, `hackrfone`, `hydrasdr`,
+//! enabled with Cargo features such as `rtlsdr`, `hackrf`, `hydrasdr`,
 //! `bladerf1`, `aaronia_http`, and `dummy`.
 //! Async applications that use `nusb`-based drivers on native targets should
 //! enable exactly one of `smol` or `tokio` for runtime integration. For example,
-//! native HydraSDR async support combines `hydrasdr` with either runtime. On
-//! `wasm32-unknown-unknown`, `hydrasdr` uses WebUSB without a runtime feature and
-//! only its async Seify backend is available. A worker-based WebUSB application
-//! should call `AsyncRegistry::request_permission` from a browser-window user
-//! gesture, then probe or open the authorized device inside its worker.
+//! native HackRF and HydraSDR async support combines the driver feature with
+//! either runtime. On `wasm32-unknown-unknown`, both drivers use WebUSB without
+//! a runtime feature and only their async Seify backends are available. A
+//! worker-based WebUSB application should call
+//! `AsyncRegistry::request_permission` from a browser-window user gesture, then
+//! probe or open the authorized device inside its worker.
 //!
 //! Native Rust drivers are still experimental. For production use and the
 //! widest set of stable hardware integrations, prefer the SoapySDR backend.
@@ -218,10 +219,10 @@ pub enum DriverError {
     #[error("RtlSdr ({0})")]
     /// Error returned by the RTL-SDR backend.
     RtlSdr(seify_rtlsdr::error::RtlsdrError),
-    #[cfg(all(feature = "hackrfone", not(target_arch = "wasm32")))]
+    #[cfg(feature = "hackrf")]
     #[error("Hackrf ({0})")]
-    /// Error returned by the HackRF One backend.
-    HackRfOne(seify_hackrfone::Error),
+    /// Error returned by the HackRF backend.
+    HackRf(hackrf_nusb::Error),
     #[cfg(feature = "hydrasdr")]
     #[error("HydraSdr ({0})")]
     /// Error returned by the HydraSDR backend.
@@ -403,10 +404,10 @@ impl From<seify_rtlsdr::error::RtlsdrError> for Error {
     }
 }
 
-#[cfg(all(feature = "hackrfone", not(target_arch = "wasm32")))]
-impl From<seify_hackrfone::Error> for Error {
-    fn from(value: seify_hackrfone::Error) -> Self {
-        Error::Driver(DriverError::HackRfOne(value))
+#[cfg(feature = "hackrf")]
+impl From<hackrf_nusb::Error> for Error {
+    fn from(value: hackrf_nusb::Error) -> Self {
+        Error::Driver(DriverError::HackRf(value))
     }
 }
 
@@ -427,7 +428,7 @@ pub enum Driver {
     BladeRf,
     /// Dummy for unit tests.
     Dummy,
-    /// HackRF One backend.
+    /// HackRF backend.
     HackRf,
     /// HydraSDR backend.
     HydraSdr,
@@ -507,6 +508,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hackrf_driver_aliases_parse() {
+        for alias in ["hackrf", "hackrfone"] {
+            assert_eq!(alias.parse::<Driver>().unwrap(), Driver::HackRf);
+        }
+    }
+
+    #[test]
     fn hydrasdr_driver_aliases_parse() {
         for alias in ["hydrasdr", "hydra-sdr", "hydra"] {
             assert_eq!(alias.parse::<Driver>().unwrap(), Driver::HydraSdr);
@@ -526,6 +534,29 @@ mod tests {
         for alias in ["aaronia_http", "aaronia-http", "aaroniahttp"] {
             assert_eq!(alias.parse::<Driver>().unwrap(), Driver::AaroniaHttp);
         }
+    }
+
+    #[test]
+    #[cfg(not(all(feature = "hackrf", not(target_arch = "wasm32"))))]
+    fn hackrf_enumeration_reports_disabled_feature_when_not_enabled() {
+        assert!(matches!(
+            enumerate_with_args("driver=hackrf"),
+            Err(Error::DriverFeatureNotEnabled {
+                driver: Driver::HackRf
+            })
+        ));
+    }
+
+    #[test]
+    #[cfg(not(all(feature = "hackrf", not(target_arch = "wasm32"))))]
+    fn hackrf_from_args_reports_disabled_feature_when_not_enabled() {
+        let result = DynDevice::from_args("driver=hackrf");
+        assert!(matches!(
+            result,
+            Err(Error::DriverFeatureNotEnabled {
+                driver: Driver::HackRf
+            })
+        ));
     }
 
     #[test]

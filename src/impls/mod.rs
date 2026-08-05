@@ -26,11 +26,16 @@ pub mod soapy;
 #[cfg(all(feature = "soapy", not(target_arch = "wasm32")))]
 pub use soapy::Soapy;
 
-/// HackRF One backend.
-#[cfg(all(feature = "hackrfone", not(target_arch = "wasm32")))]
-pub mod hackrfone;
-#[cfg(all(feature = "hackrfone", not(target_arch = "wasm32")))]
-pub use hackrfone::HackRfOne;
+/// HackRF backend.
+#[cfg(feature = "hackrf")]
+pub mod hackrf;
+#[cfg(all(
+    feature = "hackrf",
+    any(target_arch = "wasm32", feature = "smol", feature = "tokio")
+))]
+pub use hackrf::AsyncHackRf;
+#[cfg(all(feature = "hackrf", not(target_arch = "wasm32")))]
+pub use hackrf::HackRf;
 
 #[cfg(feature = "hydrasdr")]
 pub mod hydrasdr;

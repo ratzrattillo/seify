@@ -212,8 +212,8 @@ impl Default for Registry {
         #[cfg(all(feature = "rtlsdr", not(target_arch = "wasm32")))]
         registry.register::<crate::impls::RtlSdr>();
 
-        #[cfg(all(feature = "hackrfone", not(target_arch = "wasm32")))]
-        registry.register::<crate::impls::HackRfOne>();
+        #[cfg(all(feature = "hackrf", not(target_arch = "wasm32")))]
+        registry.register::<crate::impls::HackRf>();
 
         #[cfg(all(feature = "hydrasdr", not(target_arch = "wasm32")))]
         registry.register::<crate::impls::HydraSdr>();
@@ -346,6 +346,28 @@ mod tests {
 
         assert_eq!(descriptors.len(), 1);
         assert_eq!(descriptors[0].get::<String>("driver").unwrap(), "dummy");
+    }
+
+    #[test]
+    #[cfg(not(all(feature = "hackrf", not(target_arch = "wasm32"))))]
+    fn registry_probe_reports_disabled_hackrf_feature() {
+        assert!(matches!(
+            Registry::default().probe("driver=hackrf"),
+            Err(Error::DriverFeatureNotEnabled {
+                driver: Driver::HackRf
+            })
+        ));
+    }
+
+    #[test]
+    #[cfg(not(all(feature = "hackrf", not(target_arch = "wasm32"))))]
+    fn registry_open_args_reports_disabled_hackrf_feature() {
+        assert!(matches!(
+            Registry::default().open_args("driver=hackrf"),
+            Err(Error::DriverFeatureNotEnabled {
+                driver: Driver::HackRf
+            })
+        ));
     }
 
     #[test]

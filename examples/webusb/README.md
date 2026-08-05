@@ -17,7 +17,6 @@ WebUSB requires a secure context; `localhost` served by Trunk qualifies. Use a
 browser with WebUSB support. The first **Open SDR** click requests device
 permission.
 
-The application code contains no HydraSDR-specific selection or controls. Its
-manifest enables `hydrasdr` because that is currently Seify's only WebUSB
-driver. As more asynchronous WASM drivers are added, their features can be
-enabled there without changing the page logic.
+The application code contains no driver-specific selection or controls. Its
+manifest enables the HackRF and HydraSDR WebUSB backends; either can be selected
+without changing the page logic.

@@ -25,7 +25,7 @@ Enable drivers explicitly in `Cargo.toml` or on the command line:
 
 ```bash
 cargo check --no-default-features --features rtlsdr
-cargo check --no-default-features --features hydrasdr,hackrfone
+cargo check --no-default-features --features hydrasdr,hackrf
 ```
 
 Available features:
@@ -36,27 +36,27 @@ Available features:
 | `soapy` | `driver=soapy` | SoapySDR backend. Enabled by default. Requires SoapySDR system libraries. |
 | `aaronia_http` | `driver=aaronia_http` | Aaronia HTTP backend. |
 | `bladerf1` | `driver=bladerf` | bladeRF 1 backend. |
-| `hackrfone` | `driver=hackrfone` | HackRF One backend. |
+| `hackrf` | `driver=hackrf` | Half-duplex HackRF RX/TX backend; async WebUSB support on `wasm32-unknown-unknown`. |
 | `hydrasdr` | `driver=hydrasdr` | HydraSDR backend; async WebUSB support on `wasm32-unknown-unknown`. |
 | `rtlsdr` | `driver=rtlsdr` | RTL-SDR backend. |
 | `smol` / `tokio` | n/a | Pick one for async `nusb` runtime integration. |
 
 For native async use with `nusb`-based drivers, enable exactly one of `smol` or
-`tokio`. For example, native HydraSDR async support is enabled with
-`hydrasdr,smol` or `hydrasdr,tokio`. WebAssembly uses WebUSB and needs only the
-`hydrasdr` feature.
+`tokio`. For example, native HackRF async support is enabled with `hackrf,smol`
+or `hackrf,tokio`. WebAssembly uses WebUSB and needs only the corresponding
+driver feature.
 
 ## WebUSB
 
-HydraSDR is the first Seify hardware driver available on
-`wasm32-unknown-unknown`. Only `AsyncHydraSdr`, `AsyncRegistry`, and the async
-device/streamer APIs are connected to that driver on wasm; the synchronous
-HydraSDR backend remains native-only.
+HackRF and HydraSDR are available on `wasm32-unknown-unknown`. Only `AsyncHackRf`,
+`AsyncHydraSdr`, `AsyncRegistry`, and the async device/streamer APIs are
+connected to those drivers on wasm; their synchronous backends remain
+native-only.
 
 Build it with:
 
 ```bash
-cargo check --target wasm32-unknown-unknown --no-default-features --features hydrasdr
+cargo check --target wasm32-unknown-unknown --no-default-features --features hackrf,hydrasdr
 ```
 
 WebUSB's `web-sys` bindings require `--cfg=web_sys_unstable_apis`; this
@@ -76,6 +76,11 @@ with:
 cd examples/webusb
 trunk serve --open
 ```
+
+The HackRF backend exposes RX channel 0, the single `ANT` port, 1 MHz–6 GHz
+tuning, 2–20 Msample/s rates, and physical `AMP`, `LNA`, and `VGA` gain elements.
+Its baseband-filter bandwidth follows the selected sample rate and is not a
+separate Seify capability.
 
 Use the generic API with an argument string to select a backend at runtime:
 
